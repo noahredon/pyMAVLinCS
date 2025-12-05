@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyMAVLinCS"
+version = "1.0.0"
+description = "Python API for autonomous drone control based on pymavlink"
+authors = [
+    {name="Noah Redon", email="redonnoah.cs@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "GPL-3.0-or-later"}
+dependencies = [
+    "pymavlink>=2.4.49",
+    "pyserial",
+    "geopy"
+]
