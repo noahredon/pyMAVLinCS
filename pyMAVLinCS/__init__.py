@@ -69,6 +69,7 @@ class MAVLinCS:
             - If timeout_heartbeat is 0, no HEARTBEAT wait is performed. Requires the correct MAVLink dialect and assumes MAVLink 2.
             - If sysid_to_request_home is None, HOME position requests are sent only to the target flight controller.
             - If mavlogfile is None, no .tlog file will be generated.
+            - If pos_rate<=0, doesn't request position.
         """
         logger.debug("Initializing MAVLinCS..")
         # -----------------------
@@ -3287,6 +3288,7 @@ class MAVLinCS:
             - Sets up callbacks for sending and receiving MAVLink messages.
             - Initializes MAVLink version and dialect if timeout_heartbeat==0.
             - Starts background MAV thread for message handling.
+            - If pos_rate<=0, doesn't request position.
         """
         self.logger.debug("Creating master object..")
         self.master: mavutil.mavfile = mavutil.mavlink_connection(
@@ -3375,7 +3377,7 @@ class MAVLinCS:
             self.mavthread.set_master(self.master)
             self.mavthread.start_thread()
 
-            if timeout_heartbeat != 0:
+            if timeout_heartbeat != 0 and pos_rate>0:
                 for msg_type, rate in [("GLOBAL_POSITION_INT", pos_rate), ("LOCAL_POSITION_NED", pos_rate), ("ATTITUDE", pos_rate), ("EXTENDED_SYS_STATE", 2)]:
                     self.set_msg_rate(msg_type=msg_type, rate=rate)
 
