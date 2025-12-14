@@ -16,7 +16,7 @@ from pymavlink import mavutil
 
 from pyMAVLinCS.mavecstra import MavThread, TimesyncHandler, StatustextReceiver, MavLogger
 from pyMAVLinCS import mavtypes
-from pyMAVLinCS.mission_control_code import MCC
+from pyMAVLinCS.mission_control_code import MCC, EMPTY
 from pyMAVLinCS.setup_logger import default_logger
 
 class MAVLinCS:
@@ -3533,7 +3533,8 @@ class MAVLinCS:
                 if m.name == "MCC": # MCC
                     mcc = self.mcc_class.get(value=m.value)
                     self.logger.info(mcc.description)
-                    self.mcc.add(mcc)
+                    if mcc != EMPTY:
+                        self.mcc.add(mcc)
             elif m.get_type() == "TIMESYNC":
                 self.timesync_handler.timesync_sent_callback(m)
             elif m.get_type() == "HEARTBEAT":
