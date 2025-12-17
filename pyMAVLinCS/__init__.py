@@ -3130,8 +3130,8 @@ class MAVLinCS:
 
         condition = (
             f"COMMAND_ACK.command == {command} and "
-            f"getattr(COMMAND_ACK, 'target_system', {self.master.target_system}) == {self.master.target_system} and "
-            f"getattr(COMMAND_ACK, 'target_component', {self.master.target_component}) == {self.master.target_component}"
+            f"getattr(COMMAND_ACK, 'target_system', {self.master.source_system}) == {self.master.source_system} and "
+            f"getattr(COMMAND_ACK, 'target_component', {self.master.source_component}) == {self.master.source_component}"
         )
         m = self.recv_match(
             type="COMMAND_ACK",
@@ -3182,8 +3182,8 @@ class MAVLinCS:
 
         condition = (
             f"({mission_type} is None or getattr(MISSION_ACK, 'mission_type', {mission_type}) == {mission_type}) and "
-            f"MISSION_ACK.target_system == {self.master.target_system} and "
-            f"MISSION_ACK.target_component == {self.master.target_component}"
+            f"MISSION_ACK.target_system == {self.master.source_system} and "
+            f"MISSION_ACK.target_component == {self.master.source_component}"
         )
 
         m = self.recv_match(
