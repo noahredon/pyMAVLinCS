@@ -3282,11 +3282,11 @@ class MAVLinCS:
             baud (int): Baud rate for serial connection.
             timeout_heartbeat (float|None): Time to wait for a HEARTBEAT before considering connection impossible. None = wait indefinitely, 0 = skip waiting.
             pos_rate (float): Frequency (Hz) at which the flight controller sends position messages to the ground station.
-            dialect (str): MAVLink dialect, required if timeout_heartbeat==0. "ardupilotmega" for ArduPilot, "common" for PX4.
+            dialect (str): MAVLink 2 dialect. Example: "ardupilotmega" for ArduPilot, "common" for PX4.
 
         Note:
+            - Initializes MAVLink version and dialect.
             - Sets up callbacks for sending and receiving MAVLink messages.
-            - Initializes MAVLink version and dialect if timeout_heartbeat==0.
             - Starts background MAV thread for message handling.
             - If pos_rate<=0, doesn't request position.
         """
