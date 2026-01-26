@@ -3290,6 +3290,12 @@ class MAVLinCS:
             - Starts background MAV thread for message handling.
             - If pos_rate<=0, doesn't request position.
         """
+        self.logger.debug("Loading MAVLink version and dialect..")
+        os.environ['MAVLINK20'] = '1'
+        os.environ.pop('MAVLINK09', None)
+        mavutil.set_dialect(dialect=dialect)
+        self.logger.debug("MAVLink version and dialect loaded")
+
         self.logger.debug("Creating master object..")
         self.master: mavutil.mavfile = mavutil.mavlink_connection(
             device=address,
@@ -3300,11 +3306,15 @@ class MAVLinCS:
         )
 
         try:
-            self.logger.debug("Master object created")
+            self.master.first_byte = False
+            self.master.mav.set_callback(self._recv_msg_callback)
+            self.master.mav.set_send_callback(self._send_callback)
             self.timesync_handler.set_master(self.master)
+            self.mavthread.set_master(self.master)
+
+            self.logger.debug("Master object created")
 
             if timeout_heartbeat != 0:
-                self.master.mav.set_callback(self._recv_msg_callback)
                 self.logger.info("Waiting for HEARTBEAT%s", f" from ({target_system}:1)" if target_system else "")
                 start_time = time.time()
                 while True:
@@ -3326,18 +3336,8 @@ class MAVLinCS:
                         break
             else:
                 self.logger.info("No timeout for HEARTBEAT specified")
-                self.master.first_byte = False
-                self.master.WIRE_PROTOCOL_VERSION = "2.0"
-                os.environ['MAVLINK20'] = '1'
-                mavutil.set_dialect(dialect=dialect)
-                self.master.mav = mavutil.mavlink.MAVLink(self.master, srcSystem=self.master.source_system, srcComponent=self.master.source_component)
-                self.master.mav.robust_parsing = self.master.robust_parsing
-                self.master.WIRE_PROTOCOL_VERSION = mavutil.mavlink.WIRE_PROTOCOL_VERSION
-                self.master.mav.set_callback(self._recv_msg_callback)
                 self.master.target_system = 1 if target_system is None else target_system
                 self.master.target_component = mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1
-
-            self.master.mav.set_send_callback(self._send_callback)
 
             self._sysid_to_request_home.clear()
             sysid_to_request_home = self.data_init.get("sysid_to_request_home", None)
@@ -3374,7 +3374,6 @@ class MAVLinCS:
                 self.logger.warning("%s is not a MAV_CMD", cmd)
 
             # Start MAV thread
-            self.mavthread.set_master(self.master)
             self.mavthread.start_thread()
 
             if timeout_heartbeat != 0 and pos_rate>0:
