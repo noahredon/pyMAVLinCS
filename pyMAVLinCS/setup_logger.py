@@ -20,6 +20,7 @@ try:
     colorama_init()
     _ENABLE_COLORS = True
 except ImportError:
+    print("Warning: colorama isn't installed. No logging color available")
     _ENABLE_COLORS = False
 
 _COLORS = {
@@ -28,7 +29,7 @@ _COLORS = {
     logging.WARNING: Fore.YELLOW,
     logging.ERROR: Fore.RED,
     logging.CRITICAL: Fore.RED + Style.BRIGHT,
-}
+} if _ENABLE_COLORS else {}
 _RESET = Style.RESET_ALL if _ENABLE_COLORS else ""
 
 
