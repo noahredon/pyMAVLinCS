@@ -946,10 +946,10 @@ class MAVLinCS:
         """Orients the gimbal.
 
         Args:
-            pitch (float): Pitch angle (rad).
-            yaw (float): Yaw angle (rad).
-            pitch_rate (float): Pitch rotation speed (rad/s).
-            yaw_rate (float): Yaw rotation speed (rad/s).
+            pitch (float): Pitch angle (deg).
+            yaw (float): Yaw angle (deg).
+            pitch_rate (float): Pitch rotation speed (deg/s).
+            yaw_rate (float): Yaw rotation speed (deg/s).
             lock_pitch (bool): True = lock pitch relative to the horizon.
             lock_yaw (bool): True = lock yaw relative to North (earth frame).
             yaw_in_earth_frame (bool): True = yaw expressed in Earth frame, otherwise vehicle frame.
@@ -987,7 +987,7 @@ class MAVLinCS:
             self.master.target_system,
             self.master.target_component,
             mavutil.mavlink.MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW,
-            1, pitch, yaw, pitch_rate, yaw_rate,    # Speeds (rad/s)
+            1, pitch, yaw, pitch_rate, yaw_rate,    # Speeds (deg/s)
             flags, 0, 0
         )
         accepted = self.wait_command_ack(
