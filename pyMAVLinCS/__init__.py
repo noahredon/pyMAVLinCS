@@ -23,55 +23,62 @@ class MAVLinCS:
     """Allows connection to one or more flight controllers on one link."""
     def __init__(self,
             address: str,
+            baud: int = 57600,
             source_system: int = 255,
             source_component: int = mavutil.mavlink.MAV_COMP_ID_MISSIONPLANNER,
             target_system: int|None = None,
-            baud: int = 57600,
-            timeout_heartbeat: float|None = None,
-            send_automatic_timesync: bool = True,
-            timesync_delay: int = 3,
-            send_automatic_home_request: bool = True,
-            home_request_delay: int = 3,
-            sysid_to_request_home: None|int|set|list[int] = None,
-            pos_rate: float = 4,
             dialect: str = "ardupilotmega",
+            mcc_class = MCC,
             logger: logging.Logger = default_logger,
             mavlogfile: str | None = 'mav.tlog',
             relative_path_to_cwd: bool = True,
-            command_ack_to_hide: None|int|set|list[int] = None,
-            mcc_class = MCC
+            **kwargs
         ):
         """Initializes the connection.
 
         Args:
             address (str): Connection address.
+            baud (int): Connection baudrate.
             source_system (int): Ground station MAVLink system ID.
             source_component (int): Ground station MAV_COMPONENT.
             target_system (int|None): MAVLink system ID of the target flight controller.
-            baud (int): Connection baudrate.
-            timeout_heartbeat (float): Timeout (in seconds) while waiting for a HEARTBEAT before considering the connection impossible (raises an Exception).
-            send_automatic_timesync (bool): Whether to send TIMESYNC messages at regular intervals.
-            timesync_delay (int): Delay (in seconds) between two automatic TIMESYNC messages.
-            send_automatic_home_request (bool): Whether to request the HOME position at regular intervals.
-            home_request_delay (int): Delay (in seconds) between two automatic HOME position requests.
-            sysid_to_request_home (None|int|set|list[int]): List of system IDs to which HOME position requests should be sent regularly.
-            pos_rate (float): Rate at which the flight controller sends position updates to the ground station.
             dialect (str): MAVLink dialect, essential if timeout_heartbeat == 0. 'ardupilotmega' for ArduPilot, 'common' for PX4.
+            mcc_class: MCC base class used in your code (gives access to your custom MCCs).
             logger (logging.Logger): Logger to use.
             mavlogfile (str|None): Filename for MAVLink message logging.
             relative_path_to_cwd (bool): Whether the tlog path is relative to the current working directory.
-            command_ack_to_hide (None|int|set|list[int]|): List of COMMAND_ACK (MAV_CMD) to show only in debug mode.
-            mcc_class: MCC base class used in your code (gives access to your custom MCCs).
+            **timeout_heartbeat (float): Timeout (in seconds) while waiting for a HEARTBEAT before considering the connection impossible (raises an Exception). Default: None.
+            **pos_rate (float): Rate at which the flight controller sends position updates to the ground station. Default: 4.
+            **send_automatic_timesync (bool): Whether to send TIMESYNC messages at regular intervals. Default: False.
+            **timesync_delay (int): Delay (in seconds) between two automatic TIMESYNC messages. Default: 3.
+            **send_automatic_home_request (bool): Whether to request the HOME position at regular intervals. Default: True.
+            **home_request_delay (int): Delay (in seconds) between two automatic HOME position requests. Default: 3.
+            **sysid_to_request_home (None|int|set|list[int]): List of system IDs to which HOME position requests should be sent regularly. Default: None.
+            **command_ack_to_hide (None|int|set|list[int]|): List of COMMAND_ACK (MAV_CMD) to show only in debug mode. Default: None.
 
         Note:
             - If target_system is None, the MAVLink ID of the first detected vehicle is used as target.
-            - If timeout_heartbeat is None, blocking wait until a valid HEARTBEAT is received (does not raise an Exception).
-            - If timeout_heartbeat is 0, no HEARTBEAT wait is performed. Requires the correct MAVLink dialect and assumes MAVLink 2.
-            - If sysid_to_request_home is None, HOME position requests are sent only to the target flight controller.
             - If mavlogfile is None, no .tlog file will be generated.
-            - If pos_rate<=0, doesn't request position.
+            - If **timeout_heartbeat is None, blocking wait until a valid HEARTBEAT is received (does not raise an Exception).
+            - If **timeout_heartbeat is 0, no HEARTBEAT wait is performed. Requires the correct MAVLink dialect and assumes MAVLink 2.
+            - If **sysid_to_request_home is None, HOME position requests are sent only to the target flight controller.
+            - If **pos_rate<=0, doesn't request position.
         """
         logger.debug("Initializing MAVLinCS..")
+
+        # ------
+        # kwargs
+        # ------
+
+        timeout_heartbeat = kwargs.get('timeout_heartbeat', None)
+        pos_rate = kwargs.get('pos_rate', 4)
+        send_automatic_timesync = kwargs.get('send_automatic_timesync', False)
+        timesync_delay = kwargs.get('timesync_delay', 3)
+        send_automatic_home_request = kwargs.get('send_automatic_home_request', True)
+        home_request_delay = kwargs.get('home_request_delay', 3)
+        sysid_to_request_home = kwargs.get('sysid_to_request_home', None)
+        command_ack_to_hide = kwargs.get('command_ack_to_hide', None)
+
         # -----------------------
         # User-provided variables
         # -----------------------
@@ -145,13 +152,13 @@ class MAVLinCS:
         # Open connection
         self.open(
             address=address,
+            baud=baud,
             source_system=source_system,
             source_component=source_component,
             target_system=target_system,
-            baud=baud,
+            dialect=dialect,
             timeout_heartbeat=timeout_heartbeat,
-            pos_rate=pos_rate,
-            dialect=dialect
+            pos_rate=pos_rate
         )
 
     # ----------------------------------------------
@@ -208,7 +215,7 @@ class MAVLinCS:
 
         Note:
             All returned values are NaN if no data has been received.
-        """ 
+        """
         m = self.get_msg(
             msg_type="GLOBAL_POSITION_INT",
             source_system=source_system
@@ -839,7 +846,7 @@ class MAVLinCS:
             servo_channel (int): Servo channel.
             pwm (int): PWM value (between 1000 and 2000. 1000=closed, 2000=open).
             target_system (int|None): Target MAVLink system ID for the command. Defaults to the master's ID.
-            **timeout_ack (float|None): Acknowledgment wait time.
+            **timeout_ack (float|None): Acknowledgment wait time. Default: 2.
 
         Returns:
             bool: Result of the operation.
@@ -872,8 +879,8 @@ class MAVLinCS:
         )
         accepted = self.wait_command_ack(
             command=mavutil.mavlink.MAV_CMD_DO_SET_SERVO,
-            timeout=timeout_ack,
-            source_system=target_system
+            source_system=target_system,
+            timeout=timeout_ack
         )
         if accepted:
             self.logger.info("Servo set")
@@ -898,7 +905,7 @@ class MAVLinCS:
             latitude (float): Latitude in degrees.
             longitude (float): Longitude in degrees.
             altitude (float): Absolute altitude (MSL) in meters.
-            **timeout_ack (float): ACK wait timeout in seconds.
+            **timeout_ack (float): ACK wait timeout in seconds. Default: 3.
 
         Returns:
             bool: Result of the operation.
@@ -955,7 +962,7 @@ class MAVLinCS:
             lock_pitch (bool): True = lock pitch relative to the horizon.
             lock_yaw (bool): True = lock yaw relative to North (earth frame).
             yaw_in_earth_frame (bool): True = yaw expressed in Earth frame, otherwise vehicle frame.
-            **timeout_ack (float): Maximum wait time for ACK (seconds).
+            **timeout_ack (float): Maximum wait time for ACK (seconds). Default: 3.
 
         Returns:
             bool: True if ACK received (command accepted), False otherwise.
@@ -1012,7 +1019,7 @@ class MAVLinCS:
         """Sets the gimbal to retract position (no stabilization).
 
         Args:
-            **timeout_ack (float): Maximum wait time for ACK (seconds).
+            **timeout_ack (float): Maximum wait time for ACK (seconds). Default: 3.
 
         Returns:
             bool: True if ACK received (command accepted), False otherwise.
@@ -1055,7 +1062,7 @@ class MAVLinCS:
         """Sets the gimbal to neutral position (roll=pitch=yaw=0).
 
         Args:
-            **timeout_ack (float): Maximum wait time for ACK (seconds).
+            **timeout_ack (float): Maximum wait time for ACK (seconds). Default: 3.
 
         Returns:
             bool: True if ACK received (command accepted), False otherwise.
@@ -1102,8 +1109,8 @@ class MAVLinCS:
 
         Args:
             target_system (int|None): Target MAVLink system ID for the request. Defaults to the master's ID.
-            **timeout_ack (float|None): ACK wait timeout. 0 if no wait (returns NaN, NaN, NaN). None if no timeout.
-            **timeout_home_reception (float|None): Timeout for receiving the HOME position after ACK. 0 if no wait (returns NaN, NaN, NaN). None if no timeout.
+            **timeout_ack (float|None): ACK wait timeout. 0 if no wait (returns NaN, NaN, NaN). None if no timeout. Default: 2.
+            **timeout_home_reception (float|None): Timeout for receiving the HOME position after ACK. 0 if no wait (returns NaN, NaN, NaN). None if no timeout. Default: 2.
 
         Returns:
             mavtypes.HomePosition:
@@ -1179,7 +1186,7 @@ class MAVLinCS:
             msg_type (str | int): Message type (name or ID).
             rate (float): Transmission frequency in Hz.
             target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
-            **timeout_ack (float|None): ACK wait timeout. 0 if no wait (returns False). None if no timeout.
+            **timeout_ack (float|None): ACK wait timeout. 0 if no wait (returns False). None if no timeout. Default: 2.
 
         Returns:
             bool: True if the request was accepted by the flight controller, False otherwise.
@@ -1404,8 +1411,8 @@ class MAVLinCS:
         Args:
             force (bool): Whether to force arming or not.
             target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
-            **timeout_ack (float|None): ACK wait timeout. 0 if no wait (returns False). None if no timeout.
-            **timeout_arming (float|None): Arming wait timeout. 0 if no wait after ACK (returns the ACK wait result as bool). None if no timeout.
+            **timeout_ack (float|None): ACK wait timeout. 0 if no wait (returns False). None if no timeout. Default: 2.
+            **timeout_arming (float|None): Arming wait timeout. 0 if no wait after ACK (returns the ACK wait result as bool). None if no timeout. Default: 4.
 
         Returns:
             bool: Whether the drone was armed or not.
@@ -1461,8 +1468,8 @@ class MAVLinCS:
         )
         accepted = self.wait_command_ack(
             command=mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
-            timeout=timeout_ack,
-            source_system=target_system
+            source_system=target_system,
+            timeout=timeout_ack
         )
         if accepted is None: # End of mission or Timeout
             if self.mission_ended:
@@ -1494,8 +1501,8 @@ class MAVLinCS:
         Args:
             force (bool): Whether to force disarming or not.
             target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
-            **timeout_ack (float|None): ACK wait timeout. 0 if no wait (returns False). None if no timeout.
-            **timeout_disarming (float|None): Disarming wait timeout. 0 if no wait after ACK (returns the ACK wait result as bool). None if no timeout.
+            **timeout_ack (float|None): ACK wait timeout. 0 if no wait (returns False). None if no timeout. Default: 2.
+            **timeout_disarming (float|None): Disarming wait timeout. 0 if no wait after ACK (returns the ACK wait result as bool). None if no timeout. Default: 4.
 
         Returns:
             bool: Whether the drone was disarmed or not.
@@ -1527,8 +1534,8 @@ class MAVLinCS:
         )
         accepted = self.wait_command_ack(
             command=mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
-            timeout=timeout_ack,
-            source_system=target_system
+            source_system=target_system,
+            timeout=timeout_ack
         )
         if accepted is None: # End of mission or Timeout
             if self.mission_ended:
@@ -1560,8 +1567,8 @@ class MAVLinCS:
         Args:
             mode (str|int|tuple[int, int, int]): Flight mode. str: mode name. int: mode ID on ArduPilot. tuple[int, int, int]: (MAV_MODE_FLAG, Custom Main Mode, Custom Sub Mode) on PX4.
             target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
-            **timeout_ack (float|None): ACK wait timeout. 0 if no wait (returns False). None if no timeout.
-            **timeout_set_mode (float|None): Mode change wait timeout. 0 if no wait (returns the ACK wait result as bool). None if no timeout.
+            **timeout_ack (float|None): ACK wait timeout. 0 if no wait (returns False). None if no timeout. Default: 2.
+            **timeout_set_mode (float|None): Mode change wait timeout. 0 if no wait (returns the ACK wait result as bool). None if no timeout. Default: 4.
 
         Returns:
             bool: Whether the mode was changed or not.
@@ -1623,8 +1630,8 @@ class MAVLinCS:
 
         accepted = self.wait_command_ack(
             command=mavutil.mavlink.MAV_CMD_DO_SET_MODE,
-            timeout=timeout_ack,
-            source_system=target_system
+            source_system=target_system,
+            timeout=timeout_ack
         )
         if accepted is None: # End of mission or Timeout
             if self.mission_ended:
@@ -1822,9 +1829,9 @@ class MAVLinCS:
             altitude (float): Takeoff altitude.
             pitch (float): Enforced pitch.
             target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
-            **precision (float): Required altitude precision in meters to consider the takeoff successful. Defaults to 1.
-            **timeout_ack (float|None): Timeout while waiting for the ack. 0 means no waiting (returns False). None means no timeout.
-            **timeout_takeoff (float|None): Timeout while waiting for the takeoff to complete. 0 means no waiting (returns the ack result as bool). None means no timeout.
+            **precision (float): Required altitude precision in meters to consider the takeoff successful. Default: 1.
+            **timeout_ack (float|None): Timeout while waiting for the ack. 0 means no waiting (returns False). None means no timeout. Default: 2.
+            **timeout_takeoff (float|None): Timeout while waiting for the takeoff to complete. 0 means no waiting (returns the ack result as bool). None means no timeout. Default: None.
 
         Returns:
             bool: Takeoff result.
@@ -1852,8 +1859,6 @@ class MAVLinCS:
                 self.logger.warning("Mode %s != GUIDED", self.mode(source_system=target_system))
                 mod_changed = self.set_mode(
                     mode="GUIDED",
-                    timeout_ack=3,
-                    timeout_set_mode=5,
                     target_system=target_system
                 )
                 if not mod_changed:
@@ -1900,7 +1905,8 @@ class MAVLinCS:
             )
             accepted = self.wait_command_ack(
                 command=mavutil.mavlink.MAV_CMD_NAV_TAKEOFF,
-                timeout=timeout_ack, source_system=target_system
+                source_system=target_system,
+                timeout=timeout_ack
             )
             if accepted is None:
                 self.logger.critical("Takeoff failed: insufficient data")
@@ -1976,9 +1982,9 @@ class MAVLinCS:
 
         Args:
             target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
-            **timeout_ack (float|None): Timeout while waiting for the ack.
-            **timeout_set_mode (float|None): Timeout while waiting for the mode change.
-            **timeout_land (float|None): Timeout while waiting for the landing to complete.
+            **timeout_ack (float|None): Timeout while waiting for the ack. Default: 2.
+            **timeout_set_mode (float|None): Timeout while waiting for the mode change. Default: 3.
+            **timeout_land (float|None): Timeout while waiting for the landing to complete. Default: None.
 
         Returns:
             bool: Result of the operation.
@@ -2003,9 +2009,9 @@ class MAVLinCS:
 
         if not self.set_mode(
             mode="LAND",
+            target_system=target_system,
             timeout_ack=timeout_ack,
-            timeout_set_mode=timeout_set_mode,
-            target_system=target_system
+            timeout_set_mode=timeout_set_mode
         ):
             self.logger.critical("Landing failed")
             return False
@@ -2205,7 +2211,7 @@ class MAVLinCS:
 
         Args:
             target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
-            **timeout (float|None): Timeout while waiting for the ack.
+            **timeout (float|None): Timeout while waiting for the ack. Default: 2.
 
         Returns:
             bool: Result of the request.
@@ -2231,8 +2237,8 @@ class MAVLinCS:
 
         accepted = self.wait_mission_ack(
             mission_type=mavutil.mavlink.MAV_MISSION_TYPE_MISSION,
-            timeout=timeout,
-            source_system=target_system
+            source_system=target_system,
+            timeout=timeout
         )
         if accepted:
             self.logger.info("Waypoints cleared")
@@ -2255,7 +2261,7 @@ class MAVLinCS:
         Args:
             first_wp_tkoff (bool): True if the first waypoint is a takeoff waypoint, False otherwise.
             target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
-            **timeout (float|None): Waiting timeout (used in several places).
+            **timeout (float|None): Waiting timeout (used in several places). Default: 3.
 
         Returns:
             bool: Whether the mission has started.
@@ -2280,18 +2286,18 @@ class MAVLinCS:
             target_system = self.master.target_system
         if first_wp_tkoff:
             armed = self.arm(
+                target_system=target_system,
                 timeout_ack=timeout,
-                timeout_arming=timeout,
-                target_system=target_system
+                timeout_arming=timeout
             )
             if not armed:
                 self.logger.critical("Start mission failed")
                 return False
             mod_auto = self.set_mode(
                 mode="AUTO",
+                target_system=target_system,
                 timeout_ack=timeout,
-                timeout_set_mode=timeout,
-                target_system=target_system
+                timeout_set_mode=timeout
             )
             if not mod_auto:
                 self.logger.critical("Start mission failed")
@@ -2299,18 +2305,18 @@ class MAVLinCS:
             self.logger.info("Mission started")
             return True
         disarmed = self.disarm(
+            target_system=target_system,
             timeout_ack=timeout,
-            timeout_disarming=timeout,
-            target_system=target_system
+            timeout_disarming=timeout
         )
         if not disarmed:
             self.logger.critical("Start mission failed")
             return False
         mod_auto = self.set_mode(
             mode="AUTO",
+            target_system=target_system,
             timeout_ack=timeout,
-            timeout_set_mode=timeout,
-            target_system=target_system
+            timeout_set_mode=timeout
         )
         if not mod_auto:
             self.logger.critical("Start mission failed")
@@ -2348,13 +2354,13 @@ class MAVLinCS:
 
         Args:
             target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
-            **timeout (float|None): ACK waiting timeout.
+            **timeout_ack (float|None): ACK waiting timeout. Default: 2.
 
         Returns:
             bool: Result of the request.
         """
         self.logger.debug("RTL..")
-        timeout = kwargs.get('timeout', 2)
+        timeout_ack = kwargs.get('timeout_ack', 2)
         if self.mission_ended:
             self.logger.critical("Mission stopped: Unable to RTL")
             return False
@@ -2378,8 +2384,8 @@ class MAVLinCS:
 
         accepted = self.wait_command_ack(
             command=mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH,
-            timeout=timeout,
-            source_system=target_system
+            source_system=target_system,
+            timeout=timeout_ack
         )
         if accepted:
             self.logger.info("RTL started")
@@ -2402,7 +2408,7 @@ class MAVLinCS:
         Args:
             force (bool): Whether to perform a forced reboot (not recommended; for reference only).
             target_system (int|None): Target MAVLink system ID.
-            **timeout_ack (float|None): ACK waiting timeout.
+            **timeout_ack (float|None): ACK waiting timeout. Default: 2.
 
         Returns:
             bool: Result of the operation.
@@ -2438,8 +2444,8 @@ class MAVLinCS:
 
         accepted = self.wait_command_ack(
             command=mavutil.mavlink.MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN,
-            timeout=timeout_ack,
-            source_system=target_system
+            source_system=target_system,
+            timeout=timeout_ack
         )
         if accepted:
             self.logger.info("Reboot accepted")
@@ -3278,32 +3284,33 @@ class MAVLinCS:
 
     def open(self,
             address: str,
+            baud: int = 57600,
             source_system: int = 255,
             source_component: int = mavutil.mavlink.MAV_COMP_ID_MISSIONPLANNER,
             target_system: int|None = None,
-            baud: int = 57600,
-            timeout_heartbeat: float|None = None,
-            pos_rate: float = 4,
-            dialect: str = "ardupilotmega"
+            dialect: str = "ardupilotmega",
+            **kwargs
         ):
         """Opens a MAVLink connection. Ensure any previous connection is closed.
 
         Args:
             address (str): Connection address (e.g., serial port or UDP endpoint).
+            baud (int): Baud rate for serial connection.
             source_system (int): MAVLink system ID for the ground station.
             source_component (int): MAVLink component ID for the ground station.
             target_system (int|None): MAVLink system ID of the flight controller. If None, first detected vehicle is used.
-            baud (int): Baud rate for serial connection.
-            timeout_heartbeat (float|None): Time to wait for a HEARTBEAT before considering connection impossible. None = wait indefinitely, 0 = skip waiting.
-            pos_rate (float): Frequency (Hz) at which the flight controller sends position messages to the ground station.
             dialect (str): MAVLink 2 dialect. Example: "ardupilotmega" for ArduPilot, "common" for PX4.
+            **timeout_heartbeat (float|None): Time to wait for a HEARTBEAT before considering connection impossible. None = wait indefinitely, 0 = skip waiting. Default: None.
+            **pos_rate (float): Frequency (Hz) at which the flight controller sends position messages to the ground station. Default: 4.
 
         Note:
             - Initializes MAVLink version and dialect.
             - Sets up callbacks for sending and receiving MAVLink messages.
             - Starts background MAV thread for message handling.
-            - If pos_rate<=0, doesn't request position.
+            - If **pos_rate<=0, doesn't request position.
         """
+        timeout_heartbeat = kwargs.get('timeout_heartbeat', None)
+        pos_rate = kwargs.get('pos_rate', 4)
         self.logger.debug("Loading MAVLink version and dialect..")
         os.environ['MAVLINK20'] = '1'
         os.environ.pop('MAVLINK09', None)
