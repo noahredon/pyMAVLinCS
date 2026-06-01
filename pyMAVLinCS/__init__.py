@@ -830,21 +830,22 @@ class MAVLinCS:
     def set_servo(self,
             servo_channel: int,
             pwm: int,
-            timeout_ack: float|None = 2,
-            target_system: int|None = None
+            target_system: int|None = None,
+            **kwargs
         ) -> bool:
         """Sets the position of a servo.
 
         Args:
             servo_channel (int): Servo channel.
             pwm (int): PWM value (between 1000 and 2000. 1000=closed, 2000=open).
-            timeout_ack (float|None): Acknowledgment wait time.
             target_system (int|None): Target MAVLink system ID for the command. Defaults to the master's ID.
+            **timeout_ack (float|None): Acknowledgment wait time.
 
         Returns:
             bool: Result of the operation.
         """
         self.logger.debug("Setting servo..")
+        timeout_ack = kwargs.get('timeout_ack', 2)
         if self.mission_ended:
             self.logger.critical("Mission stopped: Impossible to set servo")
             return False
@@ -889,7 +890,7 @@ class MAVLinCS:
             latitude: float,
             longitude: float,
             altitude: float,
-            timeout_ack: float = 3
+            **kwargs
         ) -> bool:
         """Sends a target GPS position.
 
@@ -897,13 +898,14 @@ class MAVLinCS:
             latitude (float): Latitude in degrees.
             longitude (float): Longitude in degrees.
             altitude (float): Absolute altitude (MSL) in meters.
-            timeout_ack (float): ACK wait timeout in seconds.
+            **timeout_ack (float): ACK wait timeout in seconds.
 
         Returns:
             bool: Result of the operation.
         """
         # Function not tested but should work by changing the gimbal mode (function to implement)
         self.logger.debug("Setting Gimbal Target..")
+        timeout_ack = kwargs.get('timeout_ack', 3)
         if self.mission_ended:
             self.logger.critical("Mission stopped: Impossible to set Gimbal target")
             return False
@@ -941,7 +943,7 @@ class MAVLinCS:
             pitch_rate: float = 0.0, yaw_rate: float = 0.0,
             lock_pitch: bool = True, lock_yaw: bool = True,
             yaw_in_earth_frame: bool = True,
-            timeout_ack: float = 3.0
+            **kwargs
         ) -> bool:
         """Orients the gimbal.
 
@@ -953,12 +955,13 @@ class MAVLinCS:
             lock_pitch (bool): True = lock pitch relative to the horizon.
             lock_yaw (bool): True = lock yaw relative to North (earth frame).
             yaw_in_earth_frame (bool): True = yaw expressed in Earth frame, otherwise vehicle frame.
-            timeout_ack (float): Maximum wait time for ACK (seconds).
+            **timeout_ack (float): Maximum wait time for ACK (seconds).
 
         Returns:
             bool: True if ACK received (command accepted), False otherwise.
         """
         self.logger.debug("Setting Gimbal Angles..")
+        timeout_ack = kwargs.get('timeout_ack', 3)
         if self.mission_ended:
             self.logger.critical("Mission stopped: Impossible to set Gimbal angles")
             return False
@@ -1005,16 +1008,17 @@ class MAVLinCS:
             self.logger.error("Gimbal Angles setting failed")
         return bool(accepted)
 
-    def set_gimbal_retract(self, timeout_ack: float = 3.0) -> bool:
+    def set_gimbal_retract(self, **kwargs) -> bool:
         """Sets the gimbal to retract position (no stabilization).
 
         Args:
-            timeout_ack (float): Maximum wait time for ACK (seconds).
+            **timeout_ack (float): Maximum wait time for ACK (seconds).
 
         Returns:
             bool: True if ACK received (command accepted), False otherwise.
         """
         self.logger.debug("Setting Gimbal Retract..")
+        timeout_ack = kwargs.get('timeout_ack', 3)
         if self.mission_ended:
             self.logger.critical("Mission stopped: Impossible to set Gimbal Retract")
             return False
@@ -1047,16 +1051,17 @@ class MAVLinCS:
             self.logger.error("Gimbal Retract setting failed")
         return bool(accepted)
 
-    def set_gimbal_neutral(self, timeout_ack: float = 3.0) -> bool:
+    def set_gimbal_neutral(self, **kwargs) -> bool:
         """Sets the gimbal to neutral position (roll=pitch=yaw=0).
 
         Args:
-            timeout_ack (float): Maximum wait time for ACK (seconds).
+            **timeout_ack (float): Maximum wait time for ACK (seconds).
 
         Returns:
             bool: True if ACK received (command accepted), False otherwise.
         """
         self.logger.debug("Setting Gimbal Neutral..")
+        timeout_ack = kwargs.get('timeout_ack', 3)
         if self.mission_ended:
             self.logger.critical("Mission stopped: Impossible to set Gimbal Neutral")
             return False
@@ -1091,15 +1096,14 @@ class MAVLinCS:
 
     def request_home_position(self,
             target_system: int|None = None,
-            timeout_ack: float|None = 2,
-            timeout_home_reception: float|None = 2
+            **kwargs
         ) -> mavtypes.HomePosition:
         """Requests and waits to receive the HOME position.
 
         Args:
             target_system (int|None): Target MAVLink system ID for the request. Defaults to the master's ID.
-            timeout_ack (float|None): ACK wait timeout. 0 if no wait (returns NaN, NaN, NaN). None if no timeout.
-            timeout_home_reception (float|None): Timeout for receiving the HOME position after ACK. 0 if no wait (returns NaN, NaN, NaN). None if no timeout.
+            **timeout_ack (float|None): ACK wait timeout. 0 if no wait (returns NaN, NaN, NaN). None if no timeout.
+            **timeout_home_reception (float|None): Timeout for receiving the HOME position after ACK. 0 if no wait (returns NaN, NaN, NaN). None if no timeout.
 
         Returns:
             mavtypes.HomePosition:
@@ -1111,6 +1115,8 @@ class MAVLinCS:
             All returned values are NaN if no data has been received.
         """
         self.logger.info("Requesting HOME..")
+        timeout_ack = kwargs.get('timeout_ack', 2)
+        timeout_home_reception = kwargs.get('timeout_home_reception', 2)
         if self.mission_ended:
             self.logger.critical("Mission stopped: Impossible to request HOME")
             return mavtypes.HomePosition(latitude_home=math.nan, longitude_home=math.nan, altitude_home=math.nan)
@@ -1165,7 +1171,7 @@ class MAVLinCS:
             msg_type: str | int,
             rate: float,
             target_system: int|None = None,
-            timeout_ack: float|None = 2
+            **kwargs
         ) -> bool:
         """Changes the sending frequency of a specific flight controller message.
 
@@ -1173,12 +1179,13 @@ class MAVLinCS:
             msg_type (str | int): Message type (name or ID).
             rate (float): Transmission frequency in Hz.
             target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
-            timeout_ack (float|None): ACK wait timeout. 0 if no wait (returns False). None if no timeout.
+            **timeout_ack (float|None): ACK wait timeout. 0 if no wait (returns False). None if no timeout.
 
         Returns:
             bool: True if the request was accepted by the flight controller, False otherwise.
         """
         self.logger.debug("Setting Msg Rate..")
+        timeout_ack = kwargs.get('timeout_ack', 2)
         if self.mission_ended:
             self.logger.critical("Mission stopped: Impossible to set msg rate")
             return False
@@ -1389,22 +1396,23 @@ class MAVLinCS:
 
     def arm(self,
             force: bool = False,
-            timeout_ack: float|None = 2,
-            timeout_arming: float|None = 4,
-            target_system: int|None = None
+            target_system: int|None = None,
+            **kwargs
         ) -> bool:
         """Arms the drone.
 
         Args:
             force (bool): Whether to force arming or not.
-            timeout_ack (float|None): ACK wait timeout. 0 if no wait (returns False). None if no timeout.
-            timeout_arming (float|None): Arming wait timeout. 0 if no wait after ACK (returns the ACK wait result as bool). None if no timeout.
             target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
+            **timeout_ack (float|None): ACK wait timeout. 0 if no wait (returns False). None if no timeout.
+            **timeout_arming (float|None): Arming wait timeout. 0 if no wait after ACK (returns the ACK wait result as bool). None if no timeout.
 
         Returns:
             bool: Whether the drone was armed or not.
         """
         self.logger.info("Arming..")
+        timeout_ack = kwargs.get('timeout_ack', 2)
+        timeout_arming = kwargs.get('timeout_arming', 4)
         if self.mission_ended:
             self.logger.critical("Mission stopped: Impossible to arm")
             return False
@@ -1433,9 +1441,7 @@ class MAVLinCS:
                 self.logger.warning("Mode %s not armable: trying to change mode to GUIDED", custom_mode)
                 mod_changed = self.set_mode(
                     mode="GUIDED",
-                    target_system=target_system,
-                    timeout_ack=3,
-                    timeout_set_mode=5
+                    target_system=target_system
                 )
                 if not force and not mod_changed:
                     self.logger.critical("Not the right mode, impossible to arm")
@@ -1480,22 +1486,23 @@ class MAVLinCS:
 
     def disarm(self,
             force: bool = False,
-            timeout_ack: float|None = 2,
-            timeout_disarming: float|None = 4,
-            target_system: int|None = None
+            target_system: int|None = None,
+            **kwargs
         ) -> bool:
         """Disarms the drone.
 
         Args:
             force (bool): Whether to force disarming or not.
-            timeout_ack (float|None): ACK wait timeout. 0 if no wait (returns False). None if no timeout.
-            timeout_disarming (float|None): Disarming wait timeout. 0 if no wait after ACK (returns the ACK wait result as bool). None if no timeout.
             target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
+            **timeout_ack (float|None): ACK wait timeout. 0 if no wait (returns False). None if no timeout.
+            **timeout_disarming (float|None): Disarming wait timeout. 0 if no wait after ACK (returns the ACK wait result as bool). None if no timeout.
 
         Returns:
             bool: Whether the drone was disarmed or not.
         """
         self.logger.info("Disarming..")
+        timeout_ack = kwargs.get('timeout_ack', 2)
+        timeout_disarming = kwargs.get('timeout_disarming', 4)
         if self.mission_ended:
             self.logger.critical("Mission stopped: Impossible to disarm")
             return False
@@ -1545,22 +1552,23 @@ class MAVLinCS:
 
     def set_mode(self,
             mode: str|int|tuple[int, int, int],
-            timeout_ack: float|None = 2,
-            timeout_set_mode: float|None = 4,
-            target_system: int|None = None
+            target_system: int|None = None,
+            **kwargs
         ) -> bool:
         """Changes the flight mode.
 
         Args:
             mode (str|int|tuple[int, int, int]): Flight mode. str: mode name. int: mode ID on ArduPilot. tuple[int, int, int]: (MAV_MODE_FLAG, Custom Main Mode, Custom Sub Mode) on PX4.
-            timeout_ack (float|None): ACK wait timeout. 0 if no wait (returns False). None if no timeout.
-            timeout_set_mode (float|None): Mode change wait timeout. 0 if no wait (returns the ACK wait result as bool). None if no timeout.
             target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
+            **timeout_ack (float|None): ACK wait timeout. 0 if no wait (returns False). None if no timeout.
+            **timeout_set_mode (float|None): Mode change wait timeout. 0 if no wait (returns the ACK wait result as bool). None if no timeout.
 
         Returns:
             bool: Whether the mode was changed or not.
         """
         self.logger.info("Setting Mode..")
+        timeout_ack = kwargs.get('timeout_ack', 2)
+        timeout_set_mode = kwargs.get('timeout_set_mode', 4)
         if self.mission_ended:
             self.logger.critical("Mission stopped: Impossible to change mode")
             return False
@@ -1805,25 +1813,26 @@ class MAVLinCS:
     def takeoff(self,
             altitude: float,
             pitch: float = 0,
-            timeout_ack: float|None = 2,
-            timeout_takeoff: float|None = None,
-            precision: float = 1,
-            target_system: int|None = None
+            target_system: int|None = None,
+            **kwargs
         ) -> bool:
         """Perform a takeoff. Make sure to arm the drone beforehand.
 
         Args:
             altitude (float): Takeoff altitude.
             pitch (float): Enforced pitch.
-            timeout_ack (float|None): Timeout while waiting for the ack. 0 means no waiting (returns False). None means no timeout.
-            timeout_takeoff (float|None): Timeout while waiting for the takeoff to complete. 0 means no waiting (returns the ack result as bool). None means no timeout.
-            precision (float): Required altitude precision in meters to consider the takeoff successful. Defaults to 1.
             target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
+            **precision (float): Required altitude precision in meters to consider the takeoff successful. Defaults to 1.
+            **timeout_ack (float|None): Timeout while waiting for the ack. 0 means no waiting (returns False). None means no timeout.
+            **timeout_takeoff (float|None): Timeout while waiting for the takeoff to complete. 0 means no waiting (returns the ack result as bool). None means no timeout.
 
         Returns:
             bool: Takeoff result.
         """
         self.logger.debug("Starting takeoff..")
+        precision = kwargs.get('precision', 1)
+        timeout_ack = kwargs.get('timeout_ack', 2)
+        timeout_takeoff = kwargs.get('timeout_takeoff', None)
         if self.mission_ended:
             self.logger.critical("Mission stopped: Unable to takeoff")
             return False
@@ -1960,23 +1969,24 @@ class MAVLinCS:
             time.sleep(0.05)
 
     def land(self,
-            timeout_ack: float|None = 2,
-            timeout_set_mode: float|None = 3,
-            timeout_land: float|None = None,
-            target_system: int|None = None
+            target_system: int|None = None,
+            **kwargs
         ) -> bool:
         """Perform a simple landing. Currently implemented only for ArduPilot.
 
         Args:
-            timeout_ack (float|None): Timeout while waiting for the ack.
-            timeout_set_mode (float|None): Timeout while waiting for the mode change.
-            timeout_land (float|None): Timeout while waiting for the landing to complete.
             target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
+            **timeout_ack (float|None): Timeout while waiting for the ack.
+            **timeout_set_mode (float|None): Timeout while waiting for the mode change.
+            **timeout_land (float|None): Timeout while waiting for the landing to complete.
 
         Returns:
             bool: Result of the operation.
         """
         self.logger.info("Landing..")
+        timeout_ack = kwargs.get('timeout_ack', 2)
+        timeout_set_mode = kwargs.get('timeout_set_mode', 3)
+        timeout_land = kwargs.get('timeout_land', None)
         if self.mission_ended:
             self.logger.critical("Mission stopped: Unable to land")
             return False
@@ -2188,19 +2198,20 @@ class MAVLinCS:
         return True
 
     def clear_waypoints(self,
-            timeout: float|None = 2,
-            target_system: int|None = None
+            target_system: int|None = None,
+            **kwargs
         ) -> bool:
         """Delete all waypoints.
 
         Args:
-            timeout (float|None): Timeout while waiting for the ack.
             target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
+            **timeout (float|None): Timeout while waiting for the ack.
 
         Returns:
             bool: Result of the request.
         """
         self.logger.debug("Deleting waypoints..")
+        timeout = kwargs.get('timeout', 2)
         if self.mission_ended:
             self.logger.critical("Mission stopped: Unable to clear waypoints")
             return False
@@ -2237,19 +2248,20 @@ class MAVLinCS:
     def start_mission(self,
             first_wp_tkoff: bool,
             target_system: int|None = None,
-            timeout: float|None = 3
+            **kwargs
         ) -> bool:
         """Start the mission. Currently implemented only for ArduPilot.
 
         Args:
             first_wp_tkoff (bool): True if the first waypoint is a takeoff waypoint, False otherwise.
             target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
-            timeout (float|None): Waiting timeout (used in several places).
+            **timeout (float|None): Waiting timeout (used in several places).
 
         Returns:
             bool: Whether the mission has started.
         """
         self.logger.info("Starting mission..")
+        timeout = kwargs.get('timeout', 3)
         if self.mission_ended:
             self.logger.critical("Mission stopped: Unable to start mission")
             return False
@@ -2329,19 +2341,20 @@ class MAVLinCS:
         return bool(ack)
 
     def return_to_launch(self,
-            timeout: float|None = 2,
-            target_system: int|None = None
+            target_system: int|None = None,
+            **kwargs
         ) -> bool:
         """Send a Return-To-Launch (RTL) request.
 
         Args:
-            timeout (float|None): ACK waiting timeout.
             target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
+            **timeout (float|None): ACK waiting timeout.
 
         Returns:
             bool: Result of the request.
         """
         self.logger.debug("RTL..")
+        timeout = kwargs.get('timeout', 2)
         if self.mission_ended:
             self.logger.critical("Mission stopped: Unable to RTL")
             return False
@@ -2380,21 +2393,22 @@ class MAVLinCS:
         return bool(accepted)
 
     def reboot(self,
-            timeout_ack: float|None = 2,
+            force=False,
             target_system: int|None = None,
-            force=False
+            **kwargs
         ) -> bool:
         """Reboot the autopilot.
 
         Args:
-            timeout_ack (float|None): ACK waiting timeout.
-            target_system (int|None): Target MAVLink system ID.
             force (bool): Whether to perform a forced reboot (not recommended; for reference only).
+            target_system (int|None): Target MAVLink system ID.
+            **timeout_ack (float|None): ACK waiting timeout.
 
         Returns:
             bool: Result of the operation.
         """
         self.logger.debug("Rebooting..")
+        timeout_ack = kwargs.get('timeout_ack', 2)
         if self.mission_ended:
             self.logger.critical("Mission stopped: Unable to reboot")
             return False
