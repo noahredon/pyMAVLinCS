@@ -3201,7 +3201,7 @@ class MAVLinCS:
             source_system = self.master.target_system
 
         condition = (
-            f"({mission_type} is None or getattr(MISSION_ACK, 'mission_type', {mission_type}) == {mission_type}) and "
+            f"({mission_type is None} or getattr(MISSION_ACK, 'mission_type', {mission_type}) == {mission_type}) and "
             f"MISSION_ACK.target_system == {self.master.source_system} and "
             f"MISSION_ACK.target_component == {self.master.source_component}"
         )

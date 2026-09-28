@@ -1,0 +1,55 @@
+name: Test pyMAVLinCS
+
+on:
+  push:
+    branches: [ "main", "dev" ]
+  pull_request:
+    branches: [ "main", "dev" ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pytest-mock mavproxy future lxml pexpect "empy==3.3.4" dronecan
+        pip install .
+
+    - name: Clone ArduPilot SITL
+      run: |
+        mkdir -p tests
+        cd tests
+        git clone https://github.com/ArduPilot/ardupilot.git --depth 1
+        cd ardupilot
+        git submodule update --init --recursive
+        
+    - name: Install ArduPilot Prerequisites
+      run: |
+        cd tests/ardupilot
+        Tools/environment_install/install-prereqs-ubuntu.sh -y
+
+    - name: Update PATH
+      run: |
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+        echo "PYTHONPATH=$HOME/.local/lib/python3.11/site-packages:$PYTHONPATH" >> $GITHUB_ENV
+
+    - name: Build ArduPilot SITL
+      run: |
+        cd tests/ardupilot
+        # We explicitly pre-build ArduCopter here so that sim_vehicle.py -N (no-rebuild) inside pytest runs instantly
+        ./waf configure --board sitl
+        ./waf copter
+
+    - name: Run Pytest Suite
+      run: |
+        pytest tests/
