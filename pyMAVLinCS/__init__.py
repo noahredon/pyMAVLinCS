@@ -1972,7 +1972,8 @@ class MAVLinCS:
                     self.logger.warning("Mode changed: stopping wait for takeoff completion")
                     return False
 
-            time.sleep(0.05)
+            remaining = (start_time + timeout_takeoff) - time.time() if timeout_takeoff is not None else None
+            self.recv_match(type=["GLOBAL_POSITION_INT", "EXTENDED_SYS_STATE", "HEARTBEAT", "HIGH_LATENCY2"], source_system=target_system, blocking=True, timeout=remaining)
 
     def land(self,
             target_system: int|None = None,
@@ -2007,6 +2008,9 @@ class MAVLinCS:
             self.logger.error("Landing not implemented outside ArduPilot")
             return False
 
+        if target_system is None:
+            target_system = self.master.target_system
+
         if not self.set_mode(
             mode="LAND",
             target_system=target_system,
@@ -2040,7 +2044,9 @@ class MAVLinCS:
             if timeout_land is not None and time.time() > start_time + timeout_land:
                 self.logger.error("Timeout: stopping wait for landing")
                 return disarmed
-            time.sleep(0.05)
+            
+            remaining = (start_time + timeout_land) - time.time() if timeout_land is not None else None
+            self.recv_match(type=["HEARTBEAT", "HIGH_LATENCY2"], source_system=target_system, blocking=True, timeout=remaining)
 
     def write_parameter(self,
             parameter: str, value,
@@ -2529,7 +2535,7 @@ class MAVLinCS:
             if self.mission_ended:
                 self.logger.critical("Mission stopped: follow stopped")
                 return
-            time.sleep(0.05)
+            self.recv_match(type="GLOBAL_POSITION_INT", source_system=target_system, blocking=True)
         self.logger.info("GPS received")
 
         if self.mission_ended:
@@ -2804,6 +2810,12 @@ class MAVLinCS:
         if timeout == 0:
             self.logger.warning("Zero timeout: not waiting for armament")
             return None
+        if self.master is None:
+            self.logger.error("Master object is not defined!")
+            return None
+
+        if source_system is None:
+            source_system = self.master.target_system
 
         self.logger.info("Waiting for armament..")
         start_time = time.time()
@@ -2820,7 +2832,9 @@ class MAVLinCS:
             if timeout is not None and time.time() > start_time + timeout:
                 self.logger.error("Timeout: stop waiting for armament")
                 return armed
-            time.sleep(0.05)
+            
+            remaining = (start_time + timeout) - time.time() if timeout is not None else None
+            self.recv_match(type="HEARTBEAT", source_system=source_system, blocking=True, timeout=remaining)
 
     def wait_motors_disarmed(self, source_system: int|None = None, timeout: float|None = 4) -> bool|None:
         """Wait for the motors to be disarmed.
@@ -2838,6 +2852,12 @@ class MAVLinCS:
         if timeout == 0:
             self.logger.warning("Zero timeout: not waiting for disarmament")
             return None
+        if self.master is None:
+            self.logger.error("Master object is not defined!")
+            return None
+
+        if source_system is None:
+            source_system = self.master.target_system
 
         self.logger.info("Waiting for disarmament..")
         start_time = time.time()
@@ -2854,7 +2874,9 @@ class MAVLinCS:
             if timeout is not None and time.time() > start_time + timeout:
                 self.logger.error("Timeout: stop waiting for disarmament")
                 return disarmed
-            time.sleep(0.05)
+            
+            remaining = (start_time + timeout) - time.time() if timeout is not None else None
+            self.recv_match(type="HEARTBEAT", source_system=source_system, blocking=True, timeout=remaining)
 
     def wait_mode_changed(self,
             mode: str | int | tuple[int, int, int],
@@ -2877,6 +2899,12 @@ class MAVLinCS:
         if timeout == 0:
             self.logger.warning("Zero timeout: not waiting for mode change")
             return None
+        if self.master is None:
+            self.logger.error("Master object is not defined!")
+            return None
+
+        if source_system is None:
+            source_system = self.master.target_system
 
         # Lookup IDs to identify the flight mode (if given as str)
         if isinstance(mode, str):
@@ -2934,7 +2962,9 @@ class MAVLinCS:
                 if math.isnan(self.base_mode(source_system=source_system)) or math.isnan(self.custom_mode(source_system=source_system)):
                     return None
                 return False
-            time.sleep(0.05)
+            
+            remaining = (start_time + timeout) - time.time() if timeout is not None else None
+            self.recv_match(type=["HEARTBEAT", "HIGH_LATENCY2"], source_system=source_system, blocking=True, timeout=remaining)
 
     def wait_gps_3d_fix(self, source_system: int|None = None, timeout: float|None = None) -> bool|None:
         """Wait for a GPS 3D fix.
@@ -2952,6 +2982,12 @@ class MAVLinCS:
         if timeout == 0:
             self.logger.warning("Zero timeout: not waiting for GPS 3D fix")
             return None
+        if self.master is None:
+            self.logger.error("Master object is not defined!")
+            return None
+
+        if source_system is None:
+            source_system = self.master.target_system
 
         self.logger.info("Waiting for GPS 3D fix..")
         start_time = time.time()
@@ -2968,7 +3004,9 @@ class MAVLinCS:
             if timeout is not None and time.time() > start_time + timeout:
                 self.logger.error("Timeout: stop waiting for GPS 3D fix")
                 return gps_3d_fixed
-            time.sleep(0.05)
+            
+            remaining = (start_time + timeout) - time.time() if timeout is not None else None
+            self.recv_match(type="GPS_RAW_INT", source_system=source_system, blocking=True, timeout=remaining)
 
     def wait_proximity_with_gps_pos(self,
             lat: float,
@@ -2997,6 +3035,9 @@ class MAVLinCS:
         if timeout == 0:
             self.logger.warning("Zero timeout: not waiting for proximity")
             return None
+        if self.master is None:
+            self.logger.error("Master object is not defined!")
+            return None
 
         self.logger.info("Waiting for proximity..")
         start_time = time.time()
@@ -3020,7 +3061,9 @@ class MAVLinCS:
                 if math.isnan(distance_prox):
                     return None
                 return False
-            time.sleep(0.05)
+            
+            remaining = (start_time + timeout) - time.time() if timeout is not None else None
+            self.recv_match(type="GLOBAL_POSITION_INT", source_system=self.master.target_system if self.master else None, blocking=True, timeout=remaining)
 
     def wait_proximity_with_local_pos(self,
             x: float,
@@ -3047,6 +3090,9 @@ class MAVLinCS:
         if timeout == 0:
             self.logger.warning("Zero timeout: not waiting for proximity")
             return None
+        if self.master is None:
+            self.logger.error("Master object is not defined!")
+            return None
 
         self.logger.info("Waiting for proximity..")
         start_time = time.time()
@@ -3069,7 +3115,9 @@ class MAVLinCS:
                 if math.isnan(distance_prox):
                     return None
                 return False
-            time.sleep(0.05)
+            
+            remaining = (start_time + timeout) - time.time() if timeout is not None else None
+            self.recv_match(type="LOCAL_POSITION_NED", source_system=self.master.target_system if self.master else None, blocking=True, timeout=remaining)
 
     def wait_for_home(self, source_system: int|None = None, timeout: float|None = None) -> mavtypes.HomePosition:
         """Wait to receive the HOME position.
@@ -3092,6 +3140,12 @@ class MAVLinCS:
         if timeout == 0: # No result desired
             self.logger.warning("Zero timeout: not waiting for HOME")
             return math.nan, math.nan, math.nan
+        if self.master is None:
+            self.logger.error("Master object is not defined!")
+            return math.nan, math.nan, math.nan
+
+        if source_system is None:
+            source_system = self.master.target_system
 
         self.logger.info("Waiting for HOME..")
         while True:
@@ -3116,7 +3170,8 @@ class MAVLinCS:
                     altitude_home=math.nan
                 )
 
-            time.sleep(0.05)
+            remaining = (start_time + timeout) - time.time() if timeout is not None else None
+            self.recv_match(type="HOME_POSITION", source_system=source_system, blocking=True, timeout=remaining)
 
     def wait_command_ack(self,
             command: int,
@@ -3138,6 +3193,9 @@ class MAVLinCS:
         """
         if timeout == 0: # No result desired
             self.logger.debug("Zero timeout: not waiting for COMMAND_ACK")
+            return None
+        if self.master is None:
+            self.logger.error("Master object is not defined!")
             return None
 
         self.logger.debug("Waiting for COMMAND_ACK..")
@@ -3190,6 +3248,9 @@ class MAVLinCS:
         """
         if timeout == 0:
             self.logger.debug("Zero timeout: not waiting for MISSION_ACK")
+            return None
+        if self.master is None:
+            self.logger.error("Master object is not defined!")
             return None
 
         self.logger.debug("Waiting for MISSION_ACK..")
