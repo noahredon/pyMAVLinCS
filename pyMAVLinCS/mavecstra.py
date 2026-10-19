@@ -20,8 +20,8 @@ class MavThread:
     def __init__(self,
             master: mavutil.mavfile,
             logger: logging.Logger,
-            queue_maxsize: int = 20,
-            msg_timeout: float = 0.1
+            queue_maxsize: int = 100,
+            msg_timeout: float = 1.0
         ):
         """Manages Threads.
 
@@ -149,13 +149,19 @@ class MavThread:
 
     def _thread_func(self):
         try:
-            if self._master.source_component in [mavutil.mavlink.MAV_COMP_ID_ONBOARD_COMPUTER, mavutil.mavlink.MAV_COMP_ID_ONBOARD_COMPUTER2, mavutil.mavlink.MAV_COMP_ID_ONBOARD_COMPUTER3, mavutil.mavlink.MAV_COMP_ID_ONBOARD_COMPUTER4]:
+            if self._master.source_component in [
+                mavutil.mavlink.MAV_COMP_ID_ONBOARD_COMPUTER,
+                mavutil.mavlink.MAV_COMP_ID_ONBOARD_COMPUTER2,
+                mavutil.mavlink.MAV_COMP_ID_ONBOARD_COMPUTER3,
+                mavutil.mavlink.MAV_COMP_ID_ONBOARD_COMPUTER4
+            ]:
                 mav_type = mavutil.mavlink.MAV_TYPE_ONBOARD_CONTROLLER
             elif self._master.source_component == mavutil.mavlink.MAV_COMP_ID_GPS:
                 mav_type = mavutil.mavlink.MAV_TYPE_GPS
             else:
                 mav_type = mavutil.mavlink.MAV_TYPE_GCS
             t_last_hb = 0
+            list_msgs = []
 
             while not self._disable_thread.is_set(): # As long as we want to stay connected
                 try:
@@ -170,18 +176,25 @@ class MavThread:
                 if self._disable_thread.is_set():
                     break
 
+                list_msgs.clear()
                 try:
-                    m = self._master.recv_msg()
-                    if m:
-                        with self._lock:
-                            # Add to the bounded queue. If full, deque(maxlen) will automatically remove the oldest.
-                            self._queue.append(m)
-                            # Signal that a message is available
-                            self._msg_received.set()
-                            self._msg_received.clear()
+                    for _ in range(self._queue_maxsize):
+                        if self._disable_thread.is_set():
+                            break
+                        m = self._master.recv_msg()
+                        if m is None:
+                            break
+                        list_msgs.append(m)
                 except Exception:
                     if not self._disable_thread.is_set():
                         self._logger.exception('Error while receiving MAVLink message')
+                finally:
+                    if list_msgs:
+                        with self._lock:
+                            # Add to the bounded queue. If full, deque(maxlen) will automatically remove the oldest.
+                            self._queue.extend(list_msgs)
+                            # Signal that a message is available
+                            self._msg_received.set()
 
                 if self._disable_thread.is_set():
                     break
