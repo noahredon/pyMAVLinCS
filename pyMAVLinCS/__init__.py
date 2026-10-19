@@ -3445,6 +3445,8 @@ class MAVLinCS:
         while True:
             if self.mission_ended:
                 return None
+            if self.master is None:
+                return None
             if timeout is not None:
                 now = time.time()
                 if now < start_time:
@@ -3463,12 +3465,15 @@ class MAVLinCS:
                 continue
             if source_component is not None and not m.get_srcComponent() in source_component:
                 continue
-            src_system = None
-            if hasattr(m, 'get_srcSystem'):
-                src_system = m.get_srcSystem()
-            messages = getattr(self.master.sysid_state.get(src_system), 'messages', None)
-            if not mavutil.evaluate_condition(condition, messages if messages is not None else self.master.messages):
-                continue
+            if condition is not None:
+                base_msgs = getattr(self.master.sysid_state.get(m.get_srcSystem()), 'messages', {'MAV' : self.master}) if self.master else {}
+                try:
+                    eval_context = base_msgs.copy()
+                except Exception:
+                    eval_context = {'MAV' : self.master}
+                eval_context[m.get_type()] = m
+                if not mavutil.evaluate_condition(condition, eval_context):
+                    continue
             return m
 
     # ---------
