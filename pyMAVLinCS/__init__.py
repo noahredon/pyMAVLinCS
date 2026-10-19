@@ -1690,10 +1690,20 @@ class MAVLinCS:
         if target_system is None:
             target_system = self.master.target_system
 
-        type_mask = 0b0000101111111000
+        type_mask = 0b000000000000
+        for b in [
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_VX_IGNORE,
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_VY_IGNORE,
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_VZ_IGNORE,
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_AX_IGNORE,
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_AY_IGNORE,
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_AZ_IGNORE,
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE
+        ]:
+            type_mask |= b
         if math.isnan(yaw):
             yaw = 0
-            type_mask += mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_IGNORE
+            type_mask |= mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_IGNORE
 
         self.master.mav.set_position_target_global_int_send(
             self.time_boot_ms, # time_boot_ms
@@ -1747,10 +1757,20 @@ class MAVLinCS:
         if target_system is None:
             target_system = self.master.target_system
 
-        type_mask = 0b0000101111111000
+        type_mask = 0b000000000000
+        for b in [
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_VX_IGNORE,
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_VY_IGNORE,
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_VZ_IGNORE,
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_AX_IGNORE,
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_AY_IGNORE,
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_AZ_IGNORE,
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE
+        ]:
+            type_mask |= b
         if math.isnan(yaw):
             yaw = 0
-            type_mask += mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_IGNORE
+            type_mask |= mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_IGNORE
 
         self.master.mav.set_position_target_local_ned_send(
             self.time_boot_ms, # time_boot_ms
@@ -1770,7 +1790,7 @@ class MAVLinCS:
             vx: float,
             vy: float,
             vz: float,
-            yaw: int|None = None,
+            yaw: float = math.nan,
             target_system: int|None = None
         ) -> bool:
         """Sets the drone's velocity.
@@ -1779,7 +1799,7 @@ class MAVLinCS:
             vx (float): Velocity towards North in m/s.
             vy (float): Velocity towards East in m/s.
             vz (float): Velocity downwards in m/s.
-            yaw (int|None): Desired yaw. Not defined by default.
+            yaw (float): Target position yaw (rad).
             target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
 
         Returns:
@@ -1798,17 +1818,27 @@ class MAVLinCS:
 
         if target_system is None:
             target_system = self.master.target_system
-        if yaw is None:
-            bitmask = 0b0000111111000111
-        else:
-            bitmask = 0b0000101111000111
+        type_mask = 0b000000000000
+        for b in [
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_X_IGNORE,
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_Y_IGNORE,
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_Z_IGNORE,
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_AX_IGNORE,
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_AY_IGNORE,
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_AZ_IGNORE,
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE
+        ]:
+            type_mask |= b
+        if math.isnan(yaw):
+            yaw = 0
+            type_mask |= mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_IGNORE
 
         self.master.mav.set_position_target_local_ned_send(
             self.time_boot_ms, # time_boot_ms
             target_system, # target_system
             mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1, # target_component
             mavutil.mavlink.MAV_FRAME_LOCAL_OFFSET_NED, # coordinate_frame
-            bitmask, # type_mask
+            type_mask, # type_mask
             0,0,0, # x, y, z
             vx, vy, vz, # vx, vy, vz
             0,0,0, # afx, afy, afz
@@ -1880,7 +1910,7 @@ class MAVLinCS:
                 target_system, # target_system
                 mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1, # target_component
                 mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT, # coordinate_frame
-                0b0000111111111000, # type_mask
+                0b110111111000, # type_mask
                 int(current_lat * 1e7), # lat_int
                 int(current_lon * 1e7), # lon_int
                 altitude, # relative_alt
@@ -1953,7 +1983,7 @@ class MAVLinCS:
                             target_system, # target_system
                             mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1, # target_component
                             mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT, # coordinate_frame
-                            0b0000111111111000, # type_mask
+                            0b110111111000, # type_mask
                             int(current_lat * 1e7), # lat_int
                             int(current_lon * 1e7), # lon_int
                             altitude, # relative_alt
