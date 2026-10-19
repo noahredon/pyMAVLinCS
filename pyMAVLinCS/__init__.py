@@ -3160,15 +3160,33 @@ class MAVLinCS:
             timeout=timeout,
             source_system=source_system
         )
-        if m:
-            self.logger.debug("COMMAND_ACK received: stop waiting for COMMAND_ACK")
+        start_time = time.monotonic()
+        while True:
+            remaining = None
+            if timeout is not None:
+                remaining = (start_time + timeout) - time.monotonic()
+                if remaining <= 0:
+                    self.logger.error("Timeout: stop waiting for COMMAND_ACK")
+                    return None
+
+            m = self.recv_match(
+                type="COMMAND_ACK",
+                condition=condition,
+                blocking=True,
+                timeout=remaining,
+                source_system=source_system
+            )
+            if self.mission_ended:
+                self.logger.critical("Mission stopped: stop waiting for COMMAND_ACK")
+                return None
+            if m is None:
+                self.logger.error("Timeout: stop waiting for COMMAND_ACK")
+                return None
+            if m.result == mavutil.mavlink.MAV_RESULT_IN_PROGRESS:
+                self.logger.debug("COMMAND_ACK in progress, continuing wait..")
+                continue
+            self.logger.debug(f"COMMAND_ACK received with code {m.result}: stop waiting for COMMAND_ACK")
             return bool(m.result == mavutil.mavlink.MAV_RESULT_ACCEPTED)
-        elif self.mission_ended:
-            self.logger.critical("Mission stopped: stop waiting for COMMAND_ACK")
-            return None
-        else:
-            self.logger.error("Timeout: stop waiting for COMMAND_ACK")
-            return None
 
     def wait_mission_ack(self,
             mission_type: int|None = None,
