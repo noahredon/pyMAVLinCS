@@ -3248,16 +3248,18 @@ class MAVLinCS:
 
     def get_msg(self,
             msg_type: str,
-            source_system: int|None = None
+            source_system: int|None = None,
+            max_age: float|None = None
         ) -> any:
         """Return the last received message of a certain type from a given source_system.
 
         Args:
             msg_type (str): MAVLink message type.
             source_system (int|None): MAVLink source ID of the message. Defaults to master's target_system.
+            max_age (float|None): Maximum age (in s) of the last message to be considered valid.
 
         Returns:
-            msg | None: The MAVLink message if received, else None.
+            msg|None: The MAVLink message if received, else None.
 
         Note:
             Returns None if the message hasn't been received yet.
@@ -3268,9 +3270,11 @@ class MAVLinCS:
             source_system = self.master.target_system
         if source_system not in self.master.sysid_state:
             return None
-        if msg_type not in self.master.sysid_state[source_system].messages:
-            return None
-        return self.master.sysid_state[source_system].messages.get(msg_type)
+        m = self.master.sysid_state[source_system].messages.get(msg_type, None)
+        if m is not None and max_age is not None:
+            if time.time() - getattr(m, "_timestamp", 0) > max_age:
+                return None
+        return m
 
     def mode_mapping(self, source_system: int|None = None) -> dict | None:
         """Returns a dictionary mapping flight mode names to their IDs, or None if unknown.
