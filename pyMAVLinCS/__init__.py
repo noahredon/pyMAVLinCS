@@ -1883,6 +1883,11 @@ class MAVLinCS:
         if target_system is None:
             target_system = self.master.target_system
 
+        _, _, relative_alt, _ = self.position_gps(source_system=target_system)
+        if math.isnan(relative_alt):
+            self.logger.error("No position received: impossible to takeoff with safety")
+            return False
+
         # Find the correct flight mode
         if self.autopilot_int(source_system=target_system) == mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA:
             if self.mode(source_system=target_system) != "GUIDED":
