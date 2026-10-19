@@ -2560,8 +2560,13 @@ class MAVLinCS:
 
             global_position_int = self.get_msg(
                 msg_type="GLOBAL_POSITION_INT",
-                source_system=target_system
+                source_system=target_system,
+                max_age=1.0
             )
+            if global_position_int is None:
+                self.logger.warning("Target GPS data lost or stale (>1s): skipping follow_target_send")
+                time.sleep(0.1)
+                continue
 
             lat = global_position_int.lat
             lon = global_position_int.lon
@@ -2574,17 +2579,20 @@ class MAVLinCS:
 
             scaled_imu = self.get_msg(
                 msg_type="SCALED_IMU",
-                source_system=target_system
+                source_system=target_system,
+                max_age=0.5
             )
             if scaled_imu is None:
                 scaled_imu = self.get_msg(
                     msg_type="SCALED_IMU2",
-                    source_system=target_system
+                    source_system=target_system,
+                    max_age=0.5
                 )
             if scaled_imu is None:
                 scaled_imu = self.get_msg(
                     msg_type="SCALED_IMU3",
-                    source_system=target_system
+                    source_system=target_system,
+                    max_age=0.5
                 )
 
             if scaled_imu:
@@ -2597,11 +2605,13 @@ class MAVLinCS:
 
             attitude_quaternion = self.get_msg(
                 msg_type="ATTITUDE_QUATERNION",
-                source_system=target_system
+                source_system=target_system,
+                max_age=0.5
             )
             attitude = self.get_msg(
                 msg_type="ATTITUDE",
-                source_system=target_system
+                source_system=target_system,
+                max_age=0.5
             )
 
             if attitude_quaternion and attitude:
