@@ -464,8 +464,8 @@ class MavLogger:
             ts = int(time.time() * 1e6) & ~3  # microseconds aligned to 4
             binary_data = struct.pack(">Q", ts) + m.get_msgbuf()
             with self._lock:
-                self._tlog_handle.write(binary_data)
-                self._tlog_handle.flush()  # immediate write
+                if self._tlog_handle is not None:
+                    self._tlog_handle.write(binary_data)
 
     def close(self):
         """Safely closes the binary log file."""
@@ -473,4 +473,5 @@ class MavLogger:
             with self._lock:
                 if self._tlog_handle:
                     self._tlog_handle.close()
+                    self.file = None
                     self._tlog_handle = None
