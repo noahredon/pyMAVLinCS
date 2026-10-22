@@ -104,8 +104,7 @@ class MAVLinCS:
         # -----------------
 
         self.mavthread: MavThread = MavThread(
-            master=None,
-            logger=logger
+            mavlincs=self
         )
         """Thread management object."""
 
@@ -3410,7 +3409,7 @@ class MAVLinCS:
             self.master.mav.set_callback(self._recv_msg_callback)
             self.master.mav.set_send_callback(self._send_callback)
             self.timesync_handler.set_master(self.master)
-            self.mavthread.set_master(self.master)
+            self.mavthread.set_master()
 
             self.logger.debug("Master object created")
 

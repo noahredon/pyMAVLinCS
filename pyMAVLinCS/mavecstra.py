@@ -18,23 +18,20 @@ from pymavlink import mavutil
 class MavThread:
     """Manages Threads."""
     def __init__(self,
-            master: mavutil.mavfile,
-            logger: logging.Logger,
+            mavlincs,
             queue_maxsize: int = 100,
             msg_timeout: float = 1.0
         ):
         """Manages Threads.
 
         Args:
-            master (mavutil.mavfile): Master connection.
-            logger (logging.Logger): Logger to use.
+            mavlincs (MAVLinCS): MAVLinCS object linked.
             queue_maxsize (int): Maximum size of the message queue.
             msg_timeout (float): Timeout in seconds to consider a received message as too old.
         """
-        logger.debug("Initializing MavThread..")
+        mavlincs.logger.debug("Initializing MavThread..")
 
-        self._logger: logging.Logger = logger
-        self._master: mavutil.mavfile = master
+        self._mavlincs = mavlincs
 
         # Lock for sending messages in multi-threaded context
         self._send_lock = threading.Lock()
@@ -57,30 +54,25 @@ class MavThread:
         self._msg_received: threading.Event = threading.Event()
         self._last_msg_timeout: float = msg_timeout
 
-        logger.debug("MavThread initialized")
+        self._mavlincs.logger.debug("MavThread initialized")
 
     def __send(self, mavmsg, force_mavlink1: bool = False) -> None:
         """send a MAVLink message, multi-thread safe"""
-        if self._master is None:
+        if self._mavlincs.master is None:
             return
         with self._send_lock:
-            buf = mavmsg.pack(self._master.mav, force_mavlink1=force_mavlink1)
-            self._master.write(buf)
-            self._master.mav.seq = (self._master.mav.seq + 1) % 256
-            self._master.mav.total_packets_sent += 1
-            self._master.mav.total_bytes_sent += len(buf)
-        if self._master.mav.send_callback is not None and self._master.mav.send_callback_args is not None and self._master.mav.send_callback_kwargs is not None:
-            self._master.mav.send_callback(mavmsg, *self._master.mav.send_callback_args, **self._master.mav.send_callback_kwargs)
+            buf = mavmsg.pack(self._mavlincs.master.mav, force_mavlink1=force_mavlink1)
+            self._mavlincs.master.write(buf)
+            self._mavlincs.master.mav.seq = (self._mavlincs.master.mav.seq + 1) % 256
+            self._mavlincs.master.mav.total_packets_sent += 1
+            self._mavlincs.master.mav.total_bytes_sent += len(buf)
+        if self._mavlincs.master.mav.send_callback is not None and self._mavlincs.master.mav.send_callback_args is not None and self._mavlincs.master.mav.send_callback_kwargs is not None:
+            self._mavlincs.master.mav.send_callback(mavmsg, *self._mavlincs.master.mav.send_callback_args, **self._mavlincs.master.mav.send_callback_kwargs)
 
-    def set_master(self, master: mavutil.mavfile):
-        """Sets the master to use.
-
-        Args:
-            master (mavutil.mavfile): Master connection.
-        """
-        self._master = master
+    def set_master(self):
+        """Sets the new master."""
         # Adding a threading.Lock to the master.mav.send method
-        self._master.mav.send = self.__send
+        self._mavlincs.master.mav.send = self.__send
 
     def is_thread_active(self) -> bool:
         """Indicates whether the thread is active.
@@ -93,26 +85,26 @@ class MavThread:
     def start_thread(self):
         """Starts the Thread."""
         if not self.is_thread_active(): # Thread is closed
-            self._logger.debug("Starting Thread..")
+            self._mavlincs.logger.debug("Starting Thread..")
             self._thread_disabled.clear()
             self._disable_thread.clear()
             self._thread = threading.Thread(target=self._thread_func, args=(), daemon=True)
             self._thread.start() # Begin listening to messages + sending HEARTBEATs
-            self._logger.debug("Thread started")
+            self._mavlincs.logger.debug("Thread started")
         else:
-            self._logger.warning("Thread already started but attempting to start it: aborting")
+            self._mavlincs.logger.warning("Thread already started but attempting to start it: aborting")
 
     def stop_thread(self):
         """Stops the Thread."""
         if self.is_thread_active(): # Thread is open
-            self._logger.debug("Closing Thread..")
+            self._mavlincs.logger.debug("Closing Thread..")
             self._disable_thread.set()
             self._thread_disabled.wait()
             if self._thread is not None:
                 self._thread.join(timeout=0.3)
-            self._logger.debug("Thread closed")
+            self._mavlincs.logger.debug("Thread closed")
         else:
-            self._logger.warning("Thread already closed but attempting to close it: aborting")
+            self._mavlincs.logger.warning("Thread already closed but attempting to close it: aborting")
 
     def recv_msg(self):
         '''Message receive routine (same logic as the pymavlink one)
@@ -149,17 +141,6 @@ class MavThread:
 
     def _thread_func(self):
         try:
-            if self._master.source_component in [
-                mavutil.mavlink.MAV_COMP_ID_ONBOARD_COMPUTER,
-                mavutil.mavlink.MAV_COMP_ID_ONBOARD_COMPUTER2,
-                mavutil.mavlink.MAV_COMP_ID_ONBOARD_COMPUTER3,
-                mavutil.mavlink.MAV_COMP_ID_ONBOARD_COMPUTER4
-            ]:
-                mav_type = mavutil.mavlink.MAV_TYPE_ONBOARD_CONTROLLER
-            elif self._master.source_component == mavutil.mavlink.MAV_COMP_ID_GPS:
-                mav_type = mavutil.mavlink.MAV_TYPE_GPS
-            else:
-                mav_type = mavutil.mavlink.MAV_TYPE_GCS
             t_last_hb = 0
             list_msgs = []
 
@@ -167,11 +148,22 @@ class MavThread:
                 try:
                     t = time.time()
                     if t - t_last_hb >= 1:
-                        self._master.mav.heartbeat_send(mav_type, mavutil.mavlink.MAV_AUTOPILOT_INVALID, 0, 0, 0)
+                        if self._mavlincs.master.source_component in [
+                            mavutil.mavlink.MAV_COMP_ID_ONBOARD_COMPUTER,
+                            mavutil.mavlink.MAV_COMP_ID_ONBOARD_COMPUTER2,
+                            mavutil.mavlink.MAV_COMP_ID_ONBOARD_COMPUTER3,
+                            mavutil.mavlink.MAV_COMP_ID_ONBOARD_COMPUTER4
+                        ]:
+                            mav_type = mavutil.mavlink.MAV_TYPE_ONBOARD_CONTROLLER
+                        elif self._mavlincs.master.source_component == mavutil.mavlink.MAV_COMP_ID_GPS:
+                            mav_type = mavutil.mavlink.MAV_TYPE_GPS
+                        else:
+                            mav_type = mavutil.mavlink.MAV_TYPE_GCS
+                        self._mavlincs.master.mav.heartbeat_send(mav_type, mavutil.mavlink.MAV_AUTOPILOT_INVALID, 0, 0, 0)
                         t_last_hb = t
                 except Exception:
                     if not self._disable_thread.is_set():
-                        self._logger.exception('Error while sending HEARTBEAT')
+                        self._mavlincs.logger.exception('Error while sending HEARTBEAT')
 
                 if self._disable_thread.is_set():
                     break
@@ -181,13 +173,13 @@ class MavThread:
                     for _ in range(self._queue_maxsize):
                         if self._disable_thread.is_set():
                             break
-                        m = self._master.recv_msg()
+                        m = self._mavlincs.master.recv_msg()
                         if m is None:
                             break
                         list_msgs.append(m)
                 except Exception:
                     if not self._disable_thread.is_set():
-                        self._logger.exception('Error while receiving MAVLink message')
+                        self._mavlincs.logger.exception('Error while receiving MAVLink message')
                 finally:
                     if list_msgs:
                         with self._lock:
@@ -200,12 +192,12 @@ class MavThread:
                     break
 
                 try:
-                    self._master.select(0.05)
+                    self._mavlincs.master.select(0.05)
                 except Exception:
                     time.sleep(0.05)
         except Exception:
             if not self._disable_thread.is_set():
-                self._logger.exception('Error in Thread')
+                self._mavlincs.logger.exception('Error in Thread')
         finally:
             self._thread_disabled.set()
 
