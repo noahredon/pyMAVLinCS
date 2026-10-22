@@ -2964,7 +2964,9 @@ class MAVLinCS:
                 return None
 
             if self.autopilot_int(source_system=source_system) == mavutil.mavlink.MAV_AUTOPILOT_PX4:
-                if self.base_mode(source_system=source_system) == base_mode and \
+                current_base = self.base_mode(source_system=source_system)
+                if not math.isnan(current_base) and \
+                (current_base & ~mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED) == (base_mode & ~mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED) and \
                 self.custom_main_mode(source_system=source_system) == custom_main_mode and \
                 self.custom_sub_mode(source_system=source_system) == custom_sub_mode:
                     self.logger.info("Mode changed: stop waiting for mode change")
