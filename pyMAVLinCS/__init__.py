@@ -680,9 +680,9 @@ class MAVLinCS:
         )
         if m is None:
             return None
-        if hasattr(m, "mission_state"):
-            return bool(m.mission_state == mavutil.mavlink.MISSION_STATE_NOT_STARTED)
-        return bool(m.seq == 0) # We assume being at wp 0 <=> Mission not started
+        if hasattr(m, "mission_state") and m.mission_state != mavutil.mavlink.MISSION_STATE_UNKNOWN:
+            return bool(m.mission_state == mavutil.mavlink.MISSION_STATE_COMPLETE)
+        return False
 
     def home_position(self, source_system: int|None = None) -> mavtypes.HomePosition:
         """HOME position.
@@ -897,6 +897,7 @@ class MAVLinCS:
             latitude: float,
             longitude: float,
             altitude: float,
+            gimbal_device_id: int = 0,
             **kwargs
         ) -> bool:
         """Sends a target GPS position.
@@ -905,6 +906,7 @@ class MAVLinCS:
             latitude (float): Latitude in degrees.
             longitude (float): Longitude in degrees.
             altitude (float): Absolute altitude (MSL) in meters.
+            gimbal_device_id (int): Component ID of gimbal device to address (or 1-6 for non-MAVLink gimbal), 0 for all gimbal device components.
             **timeout_ack (float): ACK wait timeout in seconds. Default: 3.
 
         Returns:
@@ -922,14 +924,21 @@ class MAVLinCS:
         if self.master is None:
             self.logger.error("Master object is not defined!")
             return False
-        self.master.mav.command_long_send(
+        if math.isnan(latitude) or math.isnan(longitude) or math.isnan(altitude):
+            self.logger.error("Invalid NaN coordinates for Gimbal target!")
+            return False
+        self.master.mav.command_int_send(
             self.master.target_system,
             self.master.target_component,
+            mavutil.mavlink.MAV_FRAME_GLOBAL,
             mavutil.mavlink.MAV_CMD_DO_SET_ROI_LOCATION,
-            1,0,0,0,0,
+            0, # current
+            0, # autocontinue
+            gimbal_device_id, # param1 (Gimbal device ID)
+            0,0,0, # param2-4 (unused)
             int(latitude*1e7),
             int(longitude*1e7),
-            altitude
+            float(altitude)
         )
         accepted = self.wait_command_ack(
             command=mavutil.mavlink.MAV_CMD_DO_SET_ROI_LOCATION,
@@ -1902,6 +1911,8 @@ class MAVLinCS:
         else:
             self.logger.info("No mode check: device is not running ArduPilot")
 
+        goto_sent = False
+
         m = self.get_msg(
             msg_type="EXTENDED_SYS_STATE",
             source_system=target_system
@@ -1923,6 +1934,7 @@ class MAVLinCS:
                 0,0,0, # afx, afy, afz
                 0,0 # yaw, yaw_rate
             )
+            goto_sent = True
 
         else:
             self.logger.info("Sending takeoff request to %s: (alt, pitch): (%s, %s)..", target_system, altitude, pitch)
@@ -1958,8 +1970,6 @@ class MAVLinCS:
         if timeout_takeoff == 0:
             self.logger.warning("Vehicle accepted the takeoff but has not taken off yet")
             return True
-
-        goto_sent = False
 
         # Wait for correct positioning
         start_time = time.time()
@@ -2287,14 +2297,14 @@ class MAVLinCS:
         return bool(accepted)
 
     def start_mission(self,
-            first_wp_tkoff: bool,
+            first_wp_tkoff: bool = None,
             target_system: int|None = None,
             **kwargs
         ) -> bool:
         """Start the mission. Currently implemented only for ArduPilot.
 
         Args:
-            first_wp_tkoff (bool): True if the first waypoint is a takeoff waypoint, False otherwise.
+            first_wp_tkoff (bool): Deprecated (will be removed soon, so do not use it). Still here for questions regarding backward compatibility.
             target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
             **timeout (float|None): Waiting timeout (used in several places). Default: 3.
 
@@ -2302,6 +2312,8 @@ class MAVLinCS:
             bool: Whether the mission has started.
         """
         self.logger.info("Starting mission..")
+        if first_wp_tkoff is not None:
+            self.logger.warning("first_wp_tkoff option in start_mission() is deprecated and will be removed soon, so do not use it!!")
         timeout = kwargs.get('timeout', 3)
         if self.mission_ended:
             self.logger.critical("Mission stopped: Unable to start mission")
@@ -2319,7 +2331,8 @@ class MAVLinCS:
 
         if target_system is None:
             target_system = self.master.target_system
-        if first_wp_tkoff:
+
+        if not self.motors_armed(source_system=target_system):
             armed = self.arm(
                 target_system=target_system,
                 timeout_ack=timeout,
@@ -2328,41 +2341,14 @@ class MAVLinCS:
             if not armed:
                 self.logger.critical("Start mission failed")
                 return False
-            mod_auto = self.set_mode(
-                mode="AUTO",
-                target_system=target_system,
-                timeout_ack=timeout,
-                timeout_set_mode=timeout
-            )
-            if not mod_auto:
-                self.logger.critical("Start mission failed")
-                return False
-            self.logger.info("Mission started")
-            return True
-        disarmed = self.disarm(
-            target_system=target_system,
-            timeout_ack=timeout,
-            timeout_disarming=timeout
-        )
-        if not disarmed:
-            self.logger.critical("Start mission failed")
-            return False
-        mod_auto = self.set_mode(
-            mode="AUTO",
-            target_system=target_system,
-            timeout_ack=timeout,
-            timeout_set_mode=timeout
-        )
-        if not mod_auto:
-            self.logger.critical("Start mission failed")
-            return False
+
         self.master.mav.command_long_send(
             target_system, # target_system
             mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1, # target_component
             mavutil.mavlink.MAV_CMD_MISSION_START, # command
             1, # confirmation
-            1, # param1 (First Item)
-            0, # param2 (Last Item) (à confirmer)
+            0, # param1 (First Item)
+            0, # param2 (Last Item)
             0,0,0,0,0 # param3-7 (unused)
         )
         ack = self.wait_command_ack(
@@ -3206,13 +3192,6 @@ class MAVLinCS:
             f"COMMAND_ACK.command == {command} and "
             f"getattr(COMMAND_ACK, 'target_system', {self.master.source_system}) == {self.master.source_system} and "
             f"getattr(COMMAND_ACK, 'target_component', {self.master.source_component}) == {self.master.source_component}"
-        )
-        m = self.recv_match(
-            type="COMMAND_ACK",
-            condition=condition,
-            blocking=True,
-            timeout=timeout,
-            source_system=source_system
         )
         start_time = time.monotonic()
         while True:

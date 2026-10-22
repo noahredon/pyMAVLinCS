@@ -49,7 +49,10 @@ class _ConsoleFormatterNoDebug(logging.Formatter):
             level = f"[{record.levelname}]"
         color = _COLORS.get(record.levelno, "") if _ENABLE_COLORS else ""
 
-        msg = f"{timestamp}{color}{level}{_RESET} {record.getMessage()}"
+        if timestamp or level:
+            msg = f"{timestamp}{color}{level}{_RESET} {record.getMessage()}"
+        else:
+            msg = record.getMessage()
         if record.exc_info:
             # Append formatted traceback
             msg += "\n" + self.formatException(record.exc_info)

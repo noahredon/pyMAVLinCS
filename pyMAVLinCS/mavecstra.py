@@ -141,11 +141,11 @@ class MavThread:
         self._msg_received.wait(timeout=timeout)
 
     def _heartbeat_sent_callback(self):
-        self.mavlincs.timesync_handler._heartbeat_sent_callback()
-        if self.mavlincs._send_automatic_home_request:
-            if self._nb_heartbeat_since_last_home_request >= self.mavlincs._home_request_delay:
-                for sysid in self.mavlincs._sysid_to_request_home:
-                    self.mavlincs.master.mav.command_long_send(
+        self._mavlincs.timesync_handler._heartbeat_sent_callback()
+        if self._mavlincs._send_automatic_home_request:
+            if self._nb_heartbeat_since_last_home_request >= self._mavlincs._home_request_delay:
+                for sysid in self._mavlincs._sysid_to_request_home:
+                    self._mavlincs.master.mav.command_long_send(
                         sysid, # target_system
                         mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1, # target_component
                         mavutil.mavlink.MAV_CMD_REQUEST_MESSAGE, # Command to request a message
