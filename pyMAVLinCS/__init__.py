@@ -420,14 +420,14 @@ class MAVLinCS:
             return "UNKNOW"
         return "UNKNOW"
 
-    def custom_mode(self, source_system: int|None = None) -> int:
+    def custom_mode(self, source_system: int|None = None) -> int|float:
         """Flight mode as an integer (ArduPilot). On PX4, allows retrieving the Custom Main Mode and Custom Sub Mode.
 
         Args:
             source_system (int|None): MAVLink system ID of the device. Defaults to the master's ID.
 
         Returns:
-            int: Flight controller mode.
+            int|float: Flight controller mode.
 
         Note:
             Returns NaN if no data has been received.
@@ -447,14 +447,14 @@ class MAVLinCS:
             return high_latency2.custom_mode
         return math.nan
 
-    def base_mode(self, source_system: int|None = None) -> int:
+    def base_mode(self, source_system: int|None = None) -> int|float:
         """Base Mode. Partially characterizes the mode on PX4.
 
         Args:
             source_system (int|None): MAVLink system ID of the device. Defaults to the master's ID.
 
         Returns:
-            int: Base Mode.
+            int|float: Base Mode.
 
         Note:
             Returns NaN if no data has been received.
@@ -467,14 +467,14 @@ class MAVLinCS:
             return hb.base_mode
         return math.nan
 
-    def custom_main_mode(self, source_system: int|None = None) -> int:
+    def custom_main_mode(self, source_system: int|None = None) -> int|float:
         """Custom Main Mode (PX4). Partially characterizes the mode on PX4.
 
         Args:
             source_system (int|None): MAVLink system ID of the device. Defaults to the master's ID.
 
         Returns:
-            int: Flight controller Custom Main Mode.
+            int|float: Flight controller Custom Main Mode.
 
         Note:
             Returns NaN if no data has been received.
@@ -484,14 +484,14 @@ class MAVLinCS:
             return math.nan
         return (custom_mode & 0xFF0000) >> 16
 
-    def custom_sub_mode(self, source_system: int|None = None) -> int:
+    def custom_sub_mode(self, source_system: int|None = None) -> int|float:
         """Custom Sub Mode (PX4). Partially characterizes the mode on PX4.
 
         Args:
             source_system (int|None): MAVLink system ID of the device. Defaults to the master's ID.
 
         Returns:
-            int: Flight controller Custom Sub Mode.
+            int|float: Flight controller Custom Sub Mode.
 
         Note:
             Returns NaN if no data has been received.
@@ -501,14 +501,14 @@ class MAVLinCS:
             return math.nan
         return (custom_mode & 0xFF000000) >> 24
 
-    def autopilot_int(self, source_system: int|None = None) -> int:
+    def autopilot_int(self, source_system: int|None = None) -> int|float:
         """Autopilot.
 
         Args:
             source_system (int|None): MAVLink system ID of the device. Defaults to the master's ID.
 
         Returns:
-            int: MAV_AUTOPILOT | Autopilot.
+            int|float: MAV_AUTOPILOT | Autopilot.
 
         Note:
             Returns NaN if no data has been received.
@@ -543,14 +543,14 @@ class MAVLinCS:
             return mavutil.mavlink.enums["MAV_AUTOPILOT"][m.autopilot].name
         return "UNKNOW"
 
-    def battery_percentage(self, source_system: int|None = None) -> int:
+    def battery_percentage(self, source_system: int|None = None) -> int|float:
         """Remaining battery (requires proper configuration of the flight controller).
 
         Args:
             source_system (int|None): MAVLink source system ID. Defaults to the master's ID.
 
         Returns:
-            int: Remaining battery percentage.
+            int|float: Remaining battery percentage.
 
         Note:
             Returns NaN if no data has been received.
@@ -642,14 +642,14 @@ class MAVLinCS:
         roll, pitch, yaw = MAVLinCS.quaternion_to_euler(q=m.q)
         return mavtypes.GimbalAngles(roll=math.degrees(roll), pitch=math.degrees(pitch), yaw=math.degrees(yaw))
 
-    def current_waypoint_seq(self, source_system: int|None = None) -> int:
+    def current_waypoint_seq(self, source_system: int|None = None) -> int|float:
         """Current waypoint seq.
 
         Args:
             source_system (int|None): MAVLink system ID of the device. Defaults to the master's ID.
 
         Returns:
-            int: Waypoint sequence number.
+            int|float: Waypoint sequence number.
 
         Note:
             Returns NaN if no data has been received.
