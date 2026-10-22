@@ -20,7 +20,6 @@ try:
     colorama_init()
     _ENABLE_COLORS = True
 except ImportError:
-    print("Warning: colorama isn't installed. No logging color available")
     _ENABLE_COLORS = False
 
 _COLORS = {

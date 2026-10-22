@@ -12,10 +12,16 @@ class MCC:
     """
 
     # Static dictionary to store MCC instances by value
-    __dict: dict[int, 'MCC'] = {}
+    _registry_by_value: dict[int, 'MCC'] = {}
 
     # Static dictionary to store MCC instances by name
-    __dict_name: dict[str, 'MCC'] = {}
+    _registry_by_name: dict[str, 'MCC'] = {}
+
+    def __init_subclass__(cls, **kwargs):
+        """Create automatically a new registry for each subclass of MCC."""
+        super().__init_subclass__(**kwargs)
+        cls._registry_by_value = {0: EMPTY}
+        cls._registry_by_name = {"EMPTY": EMPTY}
 
     def __init__(self,
                  value: int,
@@ -36,17 +42,18 @@ class MCC:
         self.level = level
         self.description = f"[{level}][{name}] {description}"
 
+        cls = self.__class__
         # Check if the MCC already exists in the static dictionary
-        if self.value in MCC.__dict:
+        if self.value in cls._registry_by_value:
             raise ValueError("Already existing MCC")  # Prevent duplicates
 
         # Check if the MCC already exists in the static dictionary
-        if self.name in MCC.__dict_name:
+        if self.name in cls._registry_by_name:
             raise ValueError("Already existing MCC")  # Prevent duplicates
 
         # Add the MCC to the static dictionaries
-        MCC.__dict[self.value] = self
-        MCC.__dict_name[self.name] = self
+        cls._registry_by_value[self.value] = self
+        cls._registry_by_name[self.name] = self
 
     def __repr__(self) -> str:
         """
@@ -73,21 +80,21 @@ class MCC:
     def __hash__(self):
         return hash(self.value)
 
-    @staticmethod
-    def get(value: int) -> 'MCC':
+    @classmethod
+    def get(cls, value: int) -> 'MCC':
         """
         Retrieves an MCC object by its numeric value.
         Returns EMPTY if no MCC exists with this value.
         """
-        return MCC.__dict.get(value, EMPTY)
+        return cls._registry_by_value.get(value, EMPTY)
 
-    @staticmethod
-    def get_name(name: str) -> 'MCC':
+    @classmethod
+    def get_name(cls, name: str) -> 'MCC':
         """
         Retrieves an MCC object by its name.
         Returns EMPTY if no MCC exists with this name.
         """
-        return MCC.__dict_name.get(name, EMPTY)
+        return cls._registry_by_name.get(name, EMPTY)
 
 EMPTY = MCC(
     value=0,

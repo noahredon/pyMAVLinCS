@@ -2826,8 +2826,7 @@ class MAVLinCS:
         Args:
             mcc (MCC): MCC to delete.
         """
-        if mcc in self.mcc:
-            self.mcc.remove(mcc)
+        self.mcc.discard(mcc)
 
     # ------------
     # Data Waiting
