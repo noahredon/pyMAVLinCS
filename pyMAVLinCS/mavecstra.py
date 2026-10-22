@@ -32,6 +32,7 @@ class MavThread:
         mavlincs.logger.debug("Initializing MavThread..")
 
         self._mavlincs = mavlincs
+        self._nb_heartbeat_since_last_home_request: int = mavlincs._home_request_delay
 
         # Lock for sending messages in multi-threaded context
         self._send_lock = threading.Lock()
@@ -139,6 +140,23 @@ class MavThread:
         '''Wait for up to timeout seconds for more data (same logic as the pymavlink one)'''
         self._msg_received.wait(timeout=timeout)
 
+    def _heartbeat_sent_callback(self):
+        self.mavlincs.timesync_handler._heartbeat_sent_callback()
+        if self.mavlincs._send_automatic_home_request:
+            if self._nb_heartbeat_since_last_home_request >= self.mavlincs._home_request_delay:
+                for sysid in self.mavlincs._sysid_to_request_home:
+                    self.mavlincs.master.mav.command_long_send(
+                        sysid, # target_system
+                        mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1, # target_component
+                        mavutil.mavlink.MAV_CMD_REQUEST_MESSAGE, # Command to request a message
+                        0, # confirmation
+                        mavutil.mavlink.MAVLINK_MSG_ID_HOME_POSITION, # param1 (Message ID)
+                        0,0,0,0,0,0 # param2-7 (unused)
+                    )
+                self._nb_heartbeat_since_last_home_request = 1
+            else:
+                self._nb_heartbeat_since_last_home_request += 1
+
     def _thread_func(self):
         try:
             t_last_hb = 0
@@ -161,6 +179,7 @@ class MavThread:
                             mav_type = mavutil.mavlink.MAV_TYPE_GCS
                         self._mavlincs.master.mav.heartbeat_send(mav_type, mavutil.mavlink.MAV_AUTOPILOT_INVALID, 0, 0, 0)
                         t_last_hb = t
+                        self._heartbeat_sent_callback()
                 except Exception:
                     if not self._disable_thread.is_set():
                         self._mavlincs.logger.exception('Error while sending HEARTBEAT')
@@ -362,7 +381,7 @@ class TimesyncHandler:
             if len(self._all_ts1_sent) > 10:
                 self._all_ts1_sent.pop(0) # Prevent list from growing too large
     
-    def heartbeat_sent_callback(self):
+    def _heartbeat_sent_callback(self):
         """Call on each HEARTBEAT sent."""
         if self._send_automatic_timesync:
             if self._nb_heartbeat_since_last_timesync >= self._timesync_delay:

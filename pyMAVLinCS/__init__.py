@@ -103,11 +103,6 @@ class MAVLinCS:
         # General variables
         # -----------------
 
-        self.mavthread: MavThread = MavThread(
-            mavlincs=self
-        )
-        """Thread management object."""
-
         self.statustext_receiver: StatustextReceiver = StatustextReceiver()
         """STATUSTEXT management object."""
 
@@ -141,12 +136,16 @@ class MAVLinCS:
 
         self._mavlogger: MavLogger = MavLogger(file=mavlogfile, relative_path_to_cwd=relative_path_to_cwd)
         self._time_boot: float = time.time()
-        self._nb_heartbeat_since_last_home_request: int = home_request_delay
 
         self._additional_recv_msg_callback: Callable|None = None     
         self._additional_send_callback: Callable|None = None
         self._mcc_callback: Callable|None = None
         self._statustext_callback: Callable|None = None
+
+        self.mavthread: MavThread = MavThread(
+            mavlincs=self
+        )
+        """Thread management object."""
 
         # Open connection
         self.open(
@@ -3652,22 +3651,6 @@ class MAVLinCS:
                         self.mcc.add(mcc)
             elif m.get_type() == "TIMESYNC":
                 self.timesync_handler.timesync_sent_callback(m)
-            elif m.get_type() == "HEARTBEAT":
-                self.timesync_handler.heartbeat_sent_callback()
-                if self._send_automatic_home_request:
-                    if self._nb_heartbeat_since_last_home_request >= self._home_request_delay:
-                        for sysid in self._sysid_to_request_home:
-                            self.master.mav.command_long_send(
-                                sysid, # target_system
-                                mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1, # target_component
-                                mavutil.mavlink.MAV_CMD_REQUEST_MESSAGE, # Command to request a message
-                                0, # confirmation
-                                mavutil.mavlink.MAVLINK_MSG_ID_HOME_POSITION, # param1 (Message ID)
-                                0,0,0,0,0,0 # param2-7 (unused)
-                            )
-                        self._nb_heartbeat_since_last_home_request = 1
-                    else:
-                        self._nb_heartbeat_since_last_home_request += 1
             if self._additional_send_callback is not None:
                 self._additional_send_callback(m)
         except Exception:
