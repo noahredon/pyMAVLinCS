@@ -74,10 +74,10 @@ class MAVLinCS:
         pos_rate = kwargs.get('pos_rate', 4)
         send_automatic_timesync = kwargs.get('send_automatic_timesync', False)
         timesync_delay = kwargs.get('timesync_delay', 3)
-        send_automatic_home_request = kwargs.get('send_automatic_home_request', True)
+        send_automatic_home_request = kwargs.get('send_automatic_home_request', False)
         home_request_delay = kwargs.get('home_request_delay', 3)
         sysid_to_request_home = kwargs.get('sysid_to_request_home', None)
-        command_ack_to_hide = kwargs.get('command_ack_to_hide', None)
+        command_ack_to_hide = kwargs.get('command_ack_to_hide', mavutil.mavlink.MAV_CMD_REQUEST_MESSAGE)
 
         # -----------------------
         # User-provided variables
@@ -411,7 +411,7 @@ class MAVLinCS:
             if high_latency2:
                 return mavutil.mode_string_v10(high_latency2)
             return "UNKNOW"
-        elif float(mavutil.mavlink.WIRE_PROTOCOL_VERSION) == '0.9':
+        elif float(mavutil.mavlink.WIRE_PROTOCOL_VERSION) == 0.9:
             # MAVLink 0.9
             sys_status = self.get_msg(
                 msg_type="SYS_STATUS",
@@ -540,6 +540,8 @@ class MAVLinCS:
             source_system=source_system
         )
         if m:
+            if m.autopilot not in mavutil.mavlink.enums["MAV_AUTOPILOT"]:
+                return f"UNKNOW: {m.autopilot}"
             return mavutil.mavlink.enums["MAV_AUTOPILOT"][m.autopilot].name
         return "UNKNOW"
 
@@ -2758,7 +2760,7 @@ class MAVLinCS:
                 msg_id,
                 i
             )
-            if i == len(chunk) - 1:
+            if i == len(chunks) - 1:
                 break # No need to sleep unnecessarily
             time.sleep(0.1)  # 10Hz
         self.logger.info("Statustext sent")
@@ -3138,13 +3140,21 @@ class MAVLinCS:
 
         if timeout == 0: # No result desired
             self.logger.warning("Zero timeout: not waiting for HOME")
-            return math.nan, math.nan, math.nan
+            return mavtypes.HomePosition(
+                latitude_home=math.nan,
+                longitude_home=math.nan,
+                altitude_home=math.nan
+            )
 
         self.logger.info("Waiting for HOME..")
         while True:
             if self.mission_ended:
                 self.logger.critical("Mission stopped: stop waiting for HOME")
-                return math.nan, math.nan, math.nan
+                return mavtypes.HomePosition(
+                    latitude_home=math.nan,
+                    longitude_home=math.nan,
+                    altitude_home=math.nan
+                )
 
             m = self.get_msg(msg_type="HOME_POSITION", source_system=source_system)
             if m and m._timestamp >= start_time: # Received after search started
@@ -3451,7 +3461,7 @@ class MAVLinCS:
                     self._command_ack_to_hide.add(command_ack_to_hide)
                 else:
                     self.logger.warning("%s is not a MAV_CMD", command_ack_to_hide)
-            elif isinstance(command_ack_to_hide, (list, set)):
+            elif isinstance(command_ack_to_hide, (list, set, tuple)):
                 for cmd in command_ack_to_hide:
                     if isinstance(cmd, int):
                         if cmd in mavutil.mavlink.enums["MAV_CMD"]:
@@ -3461,7 +3471,7 @@ class MAVLinCS:
                     else:
                         self.logger.warning("%s is not a MAV_CMD", cmd)
             elif command_ack_to_hide is not None:
-                self.logger.warning("%s is not a MAV_CMD", cmd)
+                self.logger.warning("%s does not represent any MAV_CMD", command_ack_to_hide)
 
             # Start MAV thread
             self.mavthread.start_thread()
@@ -3555,16 +3565,28 @@ class MAVLinCS:
             # Analysis
             if m.get_type() == "COMMAND_ACK" and getattr(m, "target_system", self.master.source_system) == self.master.source_system and getattr(m, "target_component", self.master.source_component) == self.master.source_component:
                 # Check that the COMMAND_ACK is intended for us
-                command = mavutil.mavlink.enums["MAV_CMD"][m.command].name[8:]
-                result = mavutil.mavlink.enums["MAV_RESULT"][m.result].name[11:]
+                if m.command in mavutil.mavlink.enums["MAV_CMD"]:
+                    command = mavutil.mavlink.enums["MAV_CMD"][m.command].name[8:]
+                else:
+                    command = f"UNKNOW MAV_CMD ({m.command})"
+                if m.result in mavutil.mavlink.enums["MAV_RESULT"]:
+                    result = mavutil.mavlink.enums["MAV_RESULT"][m.result].name[11:]
+                else:
+                    result = f"UNKNOW MAV_RESULT ({m.result})"
                 if m.command not in self._command_ack_to_hide:
                     self.logger.info("Got COMMAND_ACK: %s: %s", command, result)
                 else:
                     self.logger.debug("Got COMMAND_ACK: %s: %s", command, result)
             elif m.get_type() == "MISSION_ACK" and m.target_system == self.master.source_system and m.target_component == self.master.source_component:
                 # Check that the MISSION_ACK is intended for us
-                t = mavutil.mavlink.enums["MAV_MISSION_TYPE"][m.mission_type].name[12:]
-                res = mavutil.mavlink.enums["MAV_MISSION_RESULT"][m.type].name[12:]
+                if m.mission_type in mavutil.mavlink.enums["MAV_MISSION_TYPE"]:
+                    t = mavutil.mavlink.enums["MAV_MISSION_TYPE"][m.mission_type].name[12:]
+                else:
+                    t = f"UNKNOW MAV_MISSION_TYPE ({m.mission_type})"
+                if m.type in mavutil.mavlink.enums["MAV_MISSION_RESULT"]:
+                    res = mavutil.mavlink.enums["MAV_MISSION_RESULT"][m.type].name[12:]
+                else:
+                    res = f"UNKNOW MAV_MISSION_RESULT ({m.type})"
                 self.logger.info("Got MISSION_ACK: %s: %s", t, res)
             elif m.get_type() == "STATUSTEXT":
                 result = self.statustext_receiver.parse(m)

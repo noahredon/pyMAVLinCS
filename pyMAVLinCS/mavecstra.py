@@ -301,11 +301,11 @@ class StatustextReceiver:
         if pending.complete():
             # all chunks received!
             out = pending.accumulated_statustext()
-            if key not in self._last_statustext or out != self._last_statustext[key].text or time.time() > self._last_statustext[key]._timestamp + 2:
+            del self._statustexts_by_sysidcompid[key][mid]
+            if key not in self._last_statustext or out != self._last_statustext[key].text or time.time() > getattr(self._last_statustext[key], "_timestamp", 0) + 2:
                 m.text = out
                 self._last_statustext[key] = m
                 return m
-            del self._statustexts_by_sysidcompid[key][mid]
         return None
 
 
