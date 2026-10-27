@@ -10,7 +10,7 @@ authors = [
     {name="Noah Redon", email="redonnoah.cs@gmail.com"}
 ]
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 license = {text = "GPL-3.0-or-later"}
 dependencies = [
     "pymavlink>=2.4.49",
