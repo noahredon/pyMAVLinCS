@@ -43,14 +43,17 @@ class _ConsoleFormatterNoDebug(logging.Formatter):
         if self.add_timestamp:
             timestamp = datetime.now().strftime("%H:%M:%S") + " | "
 
-        if _ENABLE_COLORS or record.levelno == logging.DEBUG or record.levelno == logging.INFO:
+        if record.levelno == logging.DEBUG or record.levelno == logging.INFO:
             level = ""  # no [DEBUG] or [INFO]
         else:
             level = f"[{record.levelname}]"
         color = _COLORS.get(record.levelno, "") if _ENABLE_COLORS else ""
 
         if timestamp or level:
-            msg = f"{timestamp}{color}{level}{_RESET} {record.getMessage()}"
+            if color and level:
+                msg = f"{timestamp}{color}{level}{_RESET} {record.getMessage()}"
+            else:
+                msg = f"{timestamp}{level} {record.getMessage()}"
         else:
             msg = record.getMessage()
         if record.exc_info:
@@ -71,7 +74,10 @@ class _ConsoleFormatterDebug(logging.Formatter):
         level = f"[{record.levelname}]"
         color = _COLORS.get(record.levelno, "") if _ENABLE_COLORS else ""
 
-        msg = f"{timestamp}{color}{level}{_RESET} {record.getMessage()}"
+        if color:
+            msg = f"{timestamp}{color}{level}{_RESET} {record.getMessage()}"
+        else:
+            msg = f"{timestamp}{level} {record.getMessage()}"
         if record.exc_info:
             # Append formatted traceback
             msg += "\n" + self.formatException(record.exc_info)
@@ -96,10 +102,16 @@ class _FileFormatter(logging.Formatter):
 
         module_line = f"{record.module}:{record.lineno}"
 
-        msg = (
-            f"{elapsed_ms} ms | {module_line}"
-            f"{timestamp} | [{record.levelname}] {record.getMessage()}"
-        )
+        if timestamp:
+            msg = (
+                f"{elapsed_ms} ms | {module_line}"
+                f"{timestamp} | [{record.levelname}] {record.getMessage()}"
+            )
+        else:
+            msg = (
+                f"{elapsed_ms} ms | {module_line}"
+                f"[{record.levelname}] {record.getMessage()}"
+            )
 
         if record.exc_info:
             msg += "\n" + self.formatException(record.exc_info)
