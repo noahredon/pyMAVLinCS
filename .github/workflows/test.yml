@@ -5,51 +5,70 @@ on:
     branches: [ "main", "dev" ]
   pull_request:
     branches: [ "main", "dev" ]
+  schedule:
+    # Runs tests every Monday at 06:00 UTC against the latest ArduPilot master
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+  actions: write # Required to allow deleting old caches via gh cache delete
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.11"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install pytest pytest-mock mavproxy future lxml pexpect "empy==3.3.4" dronecan
-        pip install .
+      - name: Install System & Python dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential ccache g++ gawk git make wget
+          python -m pip install --upgrade pip
+          pip install pytest pytest-mock mavproxy future lxml pexpect "empy==3.3.4" dronecan pymavlink geopy colorama
+          pip install .
 
-    - name: Clone ArduPilot SITL
-      run: |
-        mkdir -p tests
-        cd tests
-        git clone https://github.com/ArduPilot/ardupilot.git --depth 1
-        cd ardupilot
-        git submodule update --init --recursive
-        
-    - name: Install ArduPilot Prerequisites
-      run: |
-        cd tests/ardupilot
-        Tools/environment_install/install-prereqs-ubuntu.sh -y
+      - name: Clone ArduPilot SITL (master)
+        id: clone-ardupilot
+        run: |
+          mkdir -p tests
+          git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/ArduPilot/ardupilot.git tests/ardupilot
+          echo "sha=$(git -C tests/ardupilot rev-parse HEAD)" >> $GITHUB_OUTPUT
 
-    - name: Update PATH
-      run: |
-        echo "$HOME/.local/bin" >> $GITHUB_PATH
-        echo "PYTHONPATH=$HOME/.local/lib/python3.11/site-packages:$PYTHONPATH" >> $GITHUB_ENV
+      - name: Restore ArduCopter SITL build cache
+        id: cache-sitl
+        uses: actions/cache@v4
+        with:
+          path: tests/ardupilot/build
+          key: sitl-arducopter-master-${{ runner.os }}-${{ steps.clone-ardupilot.outputs.sha }}
+          restore-keys: |
+            sitl-arducopter-master-${{ runner.os }}-
 
-    - name: Build ArduPilot SITL
-      run: |
-        cd tests/ardupilot
-        # We explicitly pre-build ArduCopter here so that sim_vehicle.py -N (no-rebuild) inside pytest runs instantly
-        ./waf configure --board sitl
-        ./waf copter
+      - name: Build ArduPilot SITL
+        if: steps.cache-sitl.outputs.cache-hit != 'true'
+        run: |
+          cd tests/ardupilot
+          ./waf configure --board sitl
+          ./waf copter
 
-    - name: Run Pytest Suite
-      run: |
-        pytest tests/
+      - name: Clean old ArduPilot caches
+        # Only runs on main/dev pushes (not on external PRs where cache deletion is restricted)
+        if: steps.cache-sitl.outputs.cache-hit != 'true' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for cache_id in $(gh cache list --limit 100 --json id,key --jq '.[] | select(.key | startswith("sitl-arducopter-master-")) | .id'); do
+            gh cache delete "$cache_id" || true
+          done
+
+      - name: Run Pytest Suite
+        run: |
+          pytest tests/ -v -s
