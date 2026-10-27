@@ -51,7 +51,7 @@ class MAVLinCS:
             **pos_rate (float): Rate at which the flight controller sends position updates to the ground station. Default: 4.
             **send_automatic_timesync (bool): Whether to send TIMESYNC messages at regular intervals. Default: False.
             **timesync_delay (int): Delay (in seconds) between two automatic TIMESYNC messages. Default: 3.
-            **send_automatic_home_request (bool): Whether to request the HOME position at regular intervals. Default: True.
+            **send_automatic_home_request (bool): Whether to request the HOME position at regular intervals. Default: False.
             **home_request_delay (int): Delay (in seconds) between two automatic HOME position requests. Default: 3.
             **sysid_to_request_home (None|int|set|list[int]): List of system IDs to which HOME position requests should be sent regularly. Default: None.
             **command_ack_to_hide (None|int|set|list[int]|): List of COMMAND_ACK (MAV_CMD) to show only in debug mode. Default: None.
