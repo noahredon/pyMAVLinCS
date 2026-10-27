@@ -47,14 +47,14 @@ def _wait_mission_completion(drone: MAVLinCS, timeout: float = 90.0) -> bool:
 
 
 def test_mission_started_in_air(drone):
-    """Part A: Takeoff in GUIDED then launch mission in flight (first_wp_tkoff=False)."""
+    """Part A: Takeoff in GUIDED then launch mission in flight."""
     gps0 = drone.position_gps()
     _upload_mission(drone, gps0.lat, gps0.lon, include_takeoff_and_rtl=False)
 
     assert drone.arm(timeout_arming=10) is True
     assert drone.takeoff(altitude=10.0, timeout_takeoff=30) is True
 
-    assert drone.start_mission(first_wp_tkoff=False, timeout=5) is True
+    assert drone.start_mission(timeout=5) is True
     assert _wait_mission_completion(drone, timeout=90) is True
 
     assert drone.land(timeout_land=60) is True
@@ -62,10 +62,10 @@ def test_mission_started_in_air(drone):
 
 
 def test_mission_started_from_ground_with_rtl(drone):
-    """Part B: Full mission from the ground with integrated Takeoff and RTL (first_wp_tkoff=True)."""
+    """Part B: Full mission from the ground with integrated Takeoff and RTL."""
     gps0 = drone.position_gps()
     _upload_mission(drone, gps0.lat, gps0.lon, include_takeoff_and_rtl=True)
 
-    assert drone.start_mission(first_wp_tkoff=True, timeout=10) is True
+    assert drone.start_mission(timeout=10) is True
     assert _wait_mission_completion(drone, timeout=120) is True
     assert drone.wait_motors_disarmed(timeout=30) is True

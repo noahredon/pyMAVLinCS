@@ -67,7 +67,7 @@ def main():
 
         # 2. Arm and start the mission from the ground
         print("Starting autonomous mission...")
-        if not drone.start_mission(first_wp_tkoff=True, timeout=10):
+        if not drone.start_mission(timeout=10):
             print("Failed to start mission.")
             return
 
