@@ -11,9 +11,15 @@ authors = [
 ]
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "GPL-3.0-or-later"}
+license = {text = "MPL-2.0"}
 dependencies = [
     "pymavlink>=2.4.49",
     "pyserial",
     "geopy"
+]
+
+classifiers = [
+    "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)",
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent"
 ]
