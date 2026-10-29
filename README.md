@@ -2,7 +2,7 @@
 <p align="center"> The high-level Python API for reliable, autonomous drone control, advanced telemetry, and MAVLink mission management. </p>
 
 <p align="center">
-  <img alt="License_new" src="https://img.shields.io/badge/License-GPL%20v3-yellow">
+  <img alt="License_new" src="https://img.shields.io/badge/License-MPL%202.0-brightgreen">
   <a href="https://github.com/noahredon/pyMAVLinCS/actions/workflows/test.yml"><img alt="Tests" src="https://img.shields.io/github/actions/workflow/status/noahredon/pyMAVLinCS/test.yml?branch=main&label=tests&logo=github"></a>
   <img alt="GitHub" src="https://img.shields.io/badge/github-noahredon-blue?logo=github">
   <img alt="Python" src="https://img.shields.io/badge/Python-%3E%3D3.10-blue?logo=python">
@@ -147,7 +147,7 @@ The project structure separates the core MAVLink interface, supporting utility c
 │       └── 📄 publish.yml                      # CD workflow for PyPI package publication
 ├── 📄 pytest.ini                               # Pytest configuration file
 ├── 📄 pyproject.toml                           # Project metadata, dependencies, and build requirements
-├── 📄 LICENSE                                  # Project License (GPL-3.0-or-later)
+├── 📄 LICENSE                                  # Project License (MPL 2.0)
 ├── 📄 README.md                                # Project documentation (this file)
 └── 📄 .gitignore                               # Git ignore rules
 ```
@@ -325,19 +325,16 @@ We welcome contributions to improve pyMAVLinCS! Your input helps make this proje
 - 🎯 Keep commits focused and atomic, addressing a single feature or bug fix per commit.
 
 ***
-
 ## 📝 License
 
-This project is licensed under the **GPL-3.0-or-later** license - see the [LICENSE](LICENSE) file for complete details.
+This project is licensed under the **Mozilla Public License 2.0 (MPL-2.0)** - see the [LICENSE](LICENSE) file for complete details.
 
 ### What this means:
 
-- ✅ **Commercial Use:** You can use this software for commercial purposes.
-- ✅ **Modification:** You can modify the code.
-- ✅ **Distribution:** You can distribute this software.
-- ✅ **Private Use:** You can use this project privately.
-- ✅ **Patent Use:** You are granted rights to use patents related to the software.
-- ⚠️ **Source Code Disclosure:** If you distribute modified versions of this software, you must disclose the source code under the same `GPL v3` license terms.
+- ✅ **Commercial & Private Use:** You can freely use this software in commercial, private, and proprietary closed-source applications.
+- ✅ **Integration:** You can import and use `pyMAVLinCS` in your proprietary project without being forced to open-source your entire project.
+- ✅ **Patent Grant:** You are explicitly granted rights to use patents related to this software.
+- ⚠️ **File-Level Copyleft:** If you modify the original source files of `pyMAVLinCS` itself (e.g., fixing a bug or adding a feature to the library's core), you must make the source code of those specific modified files available under the MPL 2.0. New distinct files you create for your application remain yours.
 - ⚠️ **Warranty:** The software is provided "as is," without warranty of any kind.
 
 ---
