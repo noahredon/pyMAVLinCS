@@ -44,7 +44,7 @@ Gain instant access to crucial flight and system data using simple method calls 
 - 🛰️ **Global & Local Position:** Retrieve current GPS coordinates (`position_gps`: latitude, longitude, relative altitude, MSL altitude) and local NED coordinates (`position_local`).
 - 🧭 **Attitude and Velocity:** Get precise attitude Euler angles (`angles`) and angular rates (`angular_rates`). Retrieve linear velocities in three dimensions (`speed`) and absolute speed norm (`speed_module`).
 - ⚡ **Power Monitoring:** Check remaining battery percentage (`battery_percentage`) and current voltage in Volts (`battery_voltage`).
-- ⚙️ **Flight Status:** Instantly check arming status (`motors_armed`, `motors_disarmed`), autopilot type (`autopilot_int`, `autopilot_str`), current flight mode (`mode`, `custom_mode`), and PX4 mode details (`base_mode`, `custom_main_mode`, `custom_sub_mode`).
+- ⚙️ **Flight Status:** Instantly check arming status (`motors_armed`, `motors_disarmed`), autopilot type (`autopilot_int`, `autopilot_str`), vehicle type (`vehicle_type_int`, `vehicle_type_str`), current flight mode (`mode`, `custom_mode`), and PX4 mode details (`base_mode`, `custom_main_mode`, `custom_sub_mode`).
 - 🌐 **Fix Status:** Confirm the status of the GPS system, including 3D fix availability (`gps_3d_fix`).
 - 🕒 **Timing Data:** Access system boot time in seconds (`time_boot`) and milliseconds (`time_boot_ms`), and Unix timestamp in microseconds (`time_usec`).
 
@@ -55,6 +55,7 @@ Execute mission-critical commands with built-in acknowledgment handling to ensur
 - 🚁 **Takeoff & Landing:** Initiate automated takeoff (`takeoff`) to a specified altitude (including in-air vertical repositioning) or perform an automated landing (`land`).
 - 🔄 **Flight Mode Control:** Change the flight mode using human-readable mode names, ArduPilot mode IDs, or PX4 mode tuples (`set_mode`).
 - 🗺️ **Targeted Movement:** Set precise GPS position targets (`set_gps_pos_target`) or local NED position targets (`set_local_pos_target`) with optional yaw control.
+- ✈️ **Reposition** Commands the vehicle to reposition to a specific GPS location (`do_reposition`) with optional arguments. Can be used for fixed-wings in Guided/Hold mode.
 - 💨 **Velocity Control:** Directly command the drone's velocity components (`set_speed`: North, East, Down in m/s) and heading.
 - 🏠 **Return to Launch (RTL):** Send a Return-To-Launch request (`return_to_launch`) for safe mission abort.
 - 🎯 **Dynamic Vehicle Following:** Autonomously take off and follow another moving MAVLink vehicle in real time (`do_follow`, `do_follow_with_takeoff`).
