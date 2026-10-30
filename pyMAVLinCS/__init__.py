@@ -1895,6 +1895,129 @@ class MAVLinCS:
         self.logger.debug("Speed set")
         return True
 
+    def do_reposition(self,
+                latitude: float = math.nan,
+                longitude: float = math.nan,
+                altitude: float = math.nan,
+                frame: int = mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,
+                speed: float = -1.0,
+                loiter_radius: float = 0.0,
+                ccw: bool = False,
+                yaw: float = math.nan,
+                target_system: int|None = None,
+                **kwargs
+            ) -> bool:
+            """Commands the vehicle to reposition to a specific 3D GPS location using MAV_CMD_DO_REPOSITION.
+
+            Args:
+                latitude (float): Target latitude in degrees. Set to 0 or NaN to hold the current latitude.
+                longitude (float): Target longitude in degrees. Set to 0 or NaN to hold the current longitude.
+                altitude (float): Target altitude in meters (interpreted according to frame). Set to 0 or NaN to hold the current altitude.
+                frame (int): MAV_FRAME | Coordinate and altitude reference frame:
+                    - MAV_FRAME_GLOBAL (0): Altitude (MSL).
+                    - MAV_FRAME_GLOBAL_RELATIVE_ALT (3): Altitude relative to the HOME position.
+                    - MAV_FRAME_GLOBAL_TERRAIN_ALT (10): Altitude relative to terrain height (requires rangefinder or terrain database).
+                speed (float): Desired ground speed in m/s (-1.0 or 0.0 uses the vehicle's default waypoint speed).
+                loiter_radius (float): [Fixed-Wing only] Loiter radius in meters around the target point (0.0 uses the default Flight Controller parameter).
+                ccw (bool): [Fixed-Wing only] Counter-clockwise loiter direction (False = clockwise, True = counter-clockwise). Note: If ccw is used on ArduPlane, it overrides yaw parameter.
+                yaw (float): Target yaw in radians (NaN to let the autopilot control heading). Ignored on ArduPlane if ccw is used.
+                target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
+                **force_guided (bool): Switch to Guided/Hold mode before sending the command. Default: False.
+                **timeout_ack (float|None): ACK wait timeout. 0 if no wait (returns False). None if no timeout. Default: 2.
+
+            Returns:
+                bool: True if the command was accepted, False otherwise.
+            """
+            self.logger.debug("Sending DO_REPOSITION..")
+            force_guided = kwargs.get('force_guided', False)
+            timeout_ack = kwargs.get('timeout_ack', 2)
+            if self.mission_ended:
+                self.logger.critical("Mission stopped: Unable to reposition")
+                return False
+            if not self.allow_actions:
+                self.logger.error("Actions not allowed: Unable to reposition")
+                return False
+            if self.master is None:
+                self.logger.error("Master object is not defined!")
+                return False
+
+            if target_system is None:
+                target_system = self.master.target_system
+
+            is_on_ardupilot = bool(self.autopilot_int(source_system=target_system) == mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA)
+            is_copter = bool(self.vehicle_type_int(source_system=target_system) in [
+                mavutil.mavlink.MAV_TYPE_QUADROTOR,
+                mavutil.mavlink.MAV_TYPE_HEXAROTOR,
+                mavutil.mavlink.MAV_TYPE_OCTOROTOR,
+                mavutil.mavlink.MAV_TYPE_TRICOPTER,
+                mavutil.mavlink.MAV_TYPE_HELICOPTER,
+                mavutil.mavlink.MAV_TYPE_COAXIAL,
+                mavutil.mavlink.MAV_TYPE_DODECAROTOR
+            ])
+            is_fixed_wing = bool(self.vehicle_type_int(source_system=target_system) in [
+                mavutil.mavlink.MAV_TYPE_FIXED_WING,
+                mavutil.mavlink.MAV_TYPE_VTOL_DUOROTOR,
+                mavutil.mavlink.MAV_TYPE_VTOL_QUADROTOR,
+                mavutil.mavlink.MAV_TYPE_VTOL_TILTROTOR,
+                mavutil.mavlink.MAV_TYPE_VTOL_TAILSITTER,
+                mavutil.mavlink.MAV_TYPE_VTOL_FIXEDROTOR
+            ])
+
+            # ArduCopter requires already being in GUIDED mode before accepting DO_REPOSITION
+            if force_guided and is_on_ardupilot and is_copter:
+                if self.mode(source_system=target_system) != "GUIDED":
+                    self.logger.info("Switching to GUIDED mode before DO_REPOSITION..")
+                    if not self.set_mode(mode="GUIDED", target_system=target_system, timeout_ack=timeout_ack):
+                        self.logger.error("Failed to switch to GUIDED mode: aborting reposition")
+                        return False
+
+            # Set MAV_DO_REPOSITION_FLAGS_CHANGE_MODE (bit 0 = 1) if force_guided is enabled
+            flags = mavutil.mavlink.MAV_DO_REPOSITION_FLAGS_CHANGE_MODE if force_guided else 0
+
+            # Sanitize coordinates: NaN or 0.0 means "keep current" (0 in int32 degE7)
+            lat_int = 0 if (latitude is None or math.isnan(latitude)) else int(latitude * 1e7)
+            lon_int = 0 if (longitude is None or math.isnan(longitude)) else int(longitude * 1e7)
+            alt_float = math.nan if (altitude is None or math.isnan(altitude)) else float(altitude)
+
+            # Determine param4: ArduPlane uses param4 for loiter direction (0=CW, 1=CCW),
+            # while Copter/PX4 use param4 for Yaw (in radians, or NaN for default)
+            if is_fixed_wing:
+                param4 = 1.0 if ccw else 0.0
+            else:
+                param4 = float(yaw) if yaw is not None else math.nan
+
+            self.master.mav.command_int_send(
+                target_system, # target_system
+                mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1, # target_component
+                frame, # coordinate frame
+                mavutil.mavlink.MAV_CMD_DO_REPOSITION, # command
+                0, # current (unused)
+                0, # autocontinue (unused)
+                float(speed), # param1: Ground speed in m/s (-1 for default)
+                float(flags), # param2: Bitmask (MAV_DO_REPOSITION_FLAGS)
+                float(loiter_radius), # param3: Loiter radius in m for Planes (0 for default)
+                param4, # param4: Loiter direction (Plane) or Yaw in rad (Copter/PX4)
+                lat_int, # x: Latitude * 1e7
+                lon_int, # y: Longitude * 1e7
+                alt_float # z: Altitude in meters
+            )
+
+            accepted = self.wait_command_ack(
+                command=mavutil.mavlink.MAV_CMD_DO_REPOSITION,
+                source_system=target_system,
+                timeout=timeout_ack
+            )
+            if accepted:
+                self.logger.info("Reposition command accepted")
+            elif accepted is None: # Mission end or Timeout
+                if self.mission_ended:
+                    self.logger.critical("End of mission")
+                else:
+                    self.logger.critical("Reposition command timed out")
+            else: # Refused
+                self.logger.error("Reposition command failed or denied")
+            return bool(accepted)
+
     def takeoff(self,
             altitude: float,
             pitch: float = 0,
