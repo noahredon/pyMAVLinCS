@@ -540,6 +540,48 @@ class MAVLinCS:
             return mavutil.mavlink.enums["MAV_AUTOPILOT"][m.autopilot].name
         return "UNKNOW"
 
+    def vehicle_type_int(self, source_system: int|None = None) -> int|float:
+        """Vehicle type.
+
+        Args:
+            source_system (int|None): MAVLink system ID of the device. Defaults to the master's ID.
+
+        Returns:
+            int|float: MAV_TYPE | Vehicle type.
+
+        Note:
+            Returns NaN if no data has been received.
+        """
+        m = self.get_msg(
+            msg_type="HEARTBEAT",
+            source_system=source_system
+        )
+        if m:
+            return m.type
+        return math.nan
+
+    def vehicle_type_str(self, source_system: int|None = None) -> str:
+        """Vehicle type.
+
+        Args:
+            source_system (int|None): MAVLink system ID of the device. Defaults to the master's ID.
+
+        Returns:
+            str: Vehicle type (e.g.: 'MAV_TYPE_FIXED_WING', 'MAV_TYPE_QUADROTOR').
+
+        Note:
+            Returns 'UNKNOW' if no valid data has been received.
+        """
+        m = self.get_msg(
+            msg_type="HEARTBEAT",
+            source_system=source_system
+        )
+        if m:
+            if m.type not in mavutil.mavlink.enums["MAV_TYPE"]:
+                return f"UNKNOW: {m.type}"
+            return mavutil.mavlink.enums["MAV_TYPE"][m.type].name
+        return "UNKNOW"
+
     def battery_percentage(self, source_system: int|None = None) -> int|float:
         """Remaining battery (requires proper configuration of the flight controller).
 
