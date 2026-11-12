@@ -13,6 +13,7 @@ from pymavlink import mavutil
 
 from pyMAVLinCS.mavecstra import MavThread, TimesyncHandler, StatustextReceiver, MavLogger
 from pyMAVLinCS import mavtypes
+from pyMAVLinCS.mavtypes import MissionItem
 from pyMAVLinCS.mission_control_code import MCC, EMPTY
 from pyMAVLinCS.setup_logger import setup_logger, default_logger
 
@@ -27,7 +28,7 @@ class MAVLinCS:
             dialect: str = "ardupilotmega",
             mcc_class = MCC,
             logger: logging.Logger = default_logger,
-            mavlogfile: str | None = 'mav.tlog',
+            mavlogfile: str|None = 'mav.tlog',
             relative_path_to_cwd: bool = True,
             **kwargs
         ):
@@ -1181,7 +1182,7 @@ class MAVLinCS:
         return self.timesync_handler.send_timesync()
 
     def set_msg_rate(self,
-            msg_type: str | int,
+            msg_type: str|int,
             rate: float,
             target_system: int|None = None,
             **kwargs
@@ -1189,7 +1190,7 @@ class MAVLinCS:
         """Changes the sending frequency of a specific flight controller message.
 
         Args:
-            msg_type (str | int): Message type (name or ID).
+            msg_type (str|int): Message type (name or ID).
             rate (float): Transmission frequency in Hz.
             target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
             **timeout_ack (float|None): ACK wait timeout. 0 if no wait (returns False). None if no timeout. Default: 2.
@@ -2296,6 +2297,233 @@ class MAVLinCS:
             self.logger.error("Waypoint clearing failed")
         return bool(accepted)
 
+    def upload_mission(self,
+            waypoints: list[mavtypes.MissionItem|dict|tuple],
+            clear_existing: bool = True,
+            target_system: int|None = None,
+            **kwargs
+        ) -> bool:
+        """Uploads a complete waypoint mission using the MAVLink Mission Protocol handshake.
+
+        Sends MISSION_COUNT and responds sequentially to each MISSION_REQUEST_INT
+        (or MISSION_REQUEST) from the flight controller with MISSION_ITEM_INT,
+        retrying automatically on packet loss until MISSION_ACK is received.
+
+        Args:
+            waypoints (list[mavtypes.MissionItem|dict|tuple]): Ordered list of mission items
+                (starting at sequence 0, which is reserved for HOME on ArduPilot).
+                Each element can be:
+                - a ``mavtypes.MissionItem`` instance,
+                - a ``dict`` with keys ``command``, ``x`` (or ``lat``/``latitude``),
+                  ``y`` (or ``lon``/``longitude``), ``z`` (or ``alt``/``altitude``/``relative_alt``),
+                  and optional ``frame``, ``param1``, ``param2``, ``param3``, ``param4``,
+                - a 4-tuple ``(command, x, y, z)``, 5-tuple ``(command, x, y, z, frame)``,
+                  or 9-tuple ``(command, x, y, z, frame, param1, param2, param3, param4)``.
+            clear_existing (bool): Whether to clear existing waypoints on the flight controller before uploading. Default: True.
+            target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
+            **timeout (float|None): Overall timeout in seconds for the upload handshake. 0 means no wait (returns False). None means no overall timeout. Default: 15.0.
+            **retry_timeout (float): Timeout in seconds before re-sending the last packet if no request/ack is received. Default: 1.5.
+            **max_retries (int): Maximum consecutive retries per step on timeout. Default: 5.
+
+        Returns:
+            bool: True if the mission was uploaded and accepted by the flight controller, False otherwise.
+        """
+        self.logger.info("Uploading mission..")
+        timeout = kwargs.get('timeout', 15.0)
+        retry_timeout = float(kwargs.get('retry_timeout', 1.5))
+        max_retries = int(kwargs.get('max_retries', 5))
+
+        if self.mission_ended:
+            self.logger.critical("Mission stopped: Unable to upload mission")
+            return False
+        if not self.allow_actions:
+            self.logger.error("Actions not allowed: Unable to upload mission")
+            return False
+        if self.master is None:
+            self.logger.error("Master object is not defined!")
+            return False
+        if timeout == 0:
+            self.logger.warning("Zero timeout: not uploading mission")
+            return False
+        if not waypoints:
+            self.logger.error("Empty waypoint list: Unable to upload mission")
+            return False
+
+        # Normalize all waypoint definitions into mavtypes.MissionItem objects
+        normalized_wps: list[mavtypes.MissionItem] = []
+        default_frame = mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT
+        for idx, item in enumerate(waypoints):
+            if isinstance(item, mavtypes.MissionItem):
+                normalized_wps.append(item)
+            elif isinstance(item, dict):
+                if "command" not in item:
+                    self.logger.error("Waypoint #%s dict is missing required 'command' key", idx)
+                    return False
+                x_val = item.get("x", item.get("lat", item.get("latitude", 0.0)))
+                y_val = item.get("y", item.get("lon", item.get("longitude", 0.0)))
+                z_val = item.get("z", item.get("alt", item.get("altitude", item.get("relative_alt", 0.0))))
+                normalized_wps.append(mavtypes.MissionItem(
+                    command=int(item["command"]),
+                    x=float(x_val),
+                    y=float(y_val),
+                    z=float(z_val),
+                    frame=int(item.get("frame", default_frame)),
+                    param1=float(item.get("param1", 0.0)),
+                    param2=float(item.get("param2", 0.0)),
+                    param3=float(item.get("param3", 0.0)),
+                    param4=float(item.get("param4", 0.0)),
+                ))
+            elif isinstance(item, (tuple, list)):
+                if len(item) == 4:
+                    cmd, x_val, y_val, z_val = item
+                    normalized_wps.append(mavtypes.MissionItem(
+                        command=int(cmd), x=float(x_val), y=float(y_val), z=float(z_val), frame=default_frame
+                    ))
+                elif len(item) == 5:
+                    cmd, x_val, y_val, z_val, frm = item
+                    normalized_wps.append(mavtypes.MissionItem(
+                        command=int(cmd), x=float(x_val), y=float(y_val), z=float(z_val), frame=int(frm)
+                    ))
+                elif len(item) == 9:
+                    cmd, x_val, y_val, z_val, frm, p1, p2, p3, p4 = item
+                    normalized_wps.append(mavtypes.MissionItem(
+                        command=int(cmd), x=float(x_val), y=float(y_val), z=float(z_val),
+                        frame=int(frm), param1=float(p1), param2=float(p2), param3=float(p3), param4=float(p4)
+                    ))
+                else:
+                    self.logger.error(
+                        "Invalid tuple length (%s) for waypoint #%s: expected 4, 5, or 9 elements",
+                        len(item), idx
+                    )
+                    return False
+            else:
+                self.logger.error("Invalid waypoint type at index %s: %s", idx, type(item))
+                return False
+
+        if target_system is None:
+            target_system = self.master.target_system
+
+        start_time = time.monotonic()
+
+        if clear_existing:
+            clear_timeout = min(timeout, 3.0) if timeout is not None else 3.0
+            if not self.clear_waypoints(target_system=target_system, timeout=clear_timeout):
+                return False
+
+        if not self.send_waypoint_count(number_waypoints=len(normalized_wps), target_system=target_system):
+            return False
+
+        last_requested_seq: int|None = None
+        retries = 0
+
+        while True:
+            if self.mission_ended:
+                self.logger.critical("Mission stopped: aborting mission upload")
+                return False
+
+            wait_time = retry_timeout
+            if timeout is not None:
+                remaining = (start_time + timeout) - time.monotonic()
+                if remaining <= 0:
+                    self.logger.critical("Mission upload timed out")
+                    return False
+                wait_time = min(retry_timeout, remaining)
+
+            m = self.recv_match(
+                type=["MISSION_REQUEST_INT", "MISSION_REQUEST", "MISSION_ACK"],
+                blocking=True,
+                timeout=wait_time,
+                source_system=target_system
+            )
+
+            if self.mission_ended:
+                self.logger.critical("Mission stopped: aborting mission upload")
+                return False
+
+            if m is None:
+                # Check if overall timeout expired
+                if timeout is not None and (start_time + timeout) - time.monotonic() <= 0:
+                    self.logger.critical("Mission upload timed out")
+                    return False
+
+                retries += 1
+                if retries > max_retries:
+                    self.logger.critical(
+                        "Mission upload failed: max retries (%s) exceeded", max_retries
+                    )
+                    return False
+
+                if last_requested_seq is None:
+                    self.logger.warning(
+                        "No MISSION_REQUEST received: retrying MISSION_COUNT (attempt %s/%s)..",
+                        retries, max_retries
+                    )
+                    if not self.send_waypoint_count(number_waypoints=len(normalized_wps), target_system=target_system):
+                        return False
+                else:
+                    wp = normalized_wps[last_requested_seq]
+                    self.logger.warning(
+                        "No response after waypoint #%s: retrying send_waypoint (attempt %s/%s)..",
+                        last_requested_seq, retries, max_retries
+                    )
+                    if not self.send_waypoint(
+                        waypoint_index=last_requested_seq,
+                        frame=wp.frame,
+                        command=wp.command,
+                        param1=wp.param1,
+                        param2=wp.param2,
+                        param3=wp.param3,
+                        param4=wp.param4,
+                        x=wp.x,
+                        y=wp.y,
+                        z=wp.z,
+                        target_system=target_system
+                    ):
+                        return False
+                continue
+
+            # Ensure the message is addressed to our system/component and concerns MAV_MISSION_TYPE_MISSION
+            if getattr(m, "target_system", self.master.source_system) != self.master.source_system:
+                continue
+            if getattr(m, "target_component", self.master.source_component) != self.master.source_component:
+                continue
+            if getattr(m, "mission_type", mavutil.mavlink.MAV_MISSION_TYPE_MISSION) != mavutil.mavlink.MAV_MISSION_TYPE_MISSION:
+                continue
+
+            msg_type = m.get_type()
+            if msg_type in ("MISSION_REQUEST_INT", "MISSION_REQUEST"):
+                seq = m.seq
+                if seq < 0 or seq >= len(normalized_wps):
+                    self.logger.error(
+                        "Autopilot requested out-of-range waypoint seq %s (count=%s)",
+                        seq, len(normalized_wps)
+                    )
+                    return False
+                wp = normalized_wps[seq]
+                last_requested_seq = seq
+                retries = 0
+                if not self.send_waypoint(
+                    waypoint_index=seq,
+                    frame=wp.frame,
+                    command=wp.command,
+                    param1=wp.param1,
+                    param2=wp.param2,
+                    param3=wp.param3,
+                    param4=wp.param4,
+                    x=wp.x,
+                    y=wp.y,
+                    z=wp.z,
+                    target_system=target_system
+                ):
+                    return False
+
+            elif msg_type == "MISSION_ACK":
+                if m.type == mavutil.mavlink.MAV_MISSION_ACCEPTED:
+                    self.logger.info("Mission uploaded successfully (%s waypoints)", len(normalized_wps))
+                    return True
+                self.logger.error("Mission upload failed (MISSION_ACK result=%s)", m.type)
+                return False
+
     def start_mission(self,
             first_wp_tkoff: bool = None,
             target_system: int|None = None,
@@ -2887,14 +3115,14 @@ class MAVLinCS:
             time.sleep(0.05)
 
     def wait_mode_changed(self,
-            mode: str | int | tuple[int, int, int],
+            mode: str|int|tuple[int, int, int],
             source_system: int|None = None,
             timeout: float|None = 4
         ) -> bool|None:
         """Wait for a flight mode change.
 
         Args:
-            mode (str | int | tuple[int, int, int]): Flight mode. str: mode name. int: mode ID on ArduPilot. tuple[int, int, int]: (MAV_MODE_FLAG, Custom Main Mode, Custom Sub Mode) on PX4.
+            mode (str|int|tuple[int, int, int]): Flight mode. str: mode name. int: mode ID on ArduPilot. tuple[int, int, int]: (MAV_MODE_FLAG, Custom Main Mode, Custom Sub Mode) on PX4.
             source_system (int|None): MAVLink source ID to wait for. Defaults to the master's ID.
             timeout (float|None): Mode change waiting timeout. 0 means no wait (returns None). None means no timeout.
 
@@ -3309,14 +3537,14 @@ class MAVLinCS:
                 return None
         return m
 
-    def mode_mapping(self, source_system: int|None = None) -> dict | None:
+    def mode_mapping(self, source_system: int|None = None) -> dict|None:
         """Returns a dictionary mapping flight mode names to their IDs, or None if unknown.
 
         Args:
             source_system (int|None): MAVLink ID of the vehicle. Defaults to master's target_system.
 
         Returns:
-            dict | None: Dictionary mapping mode names (str) to IDs (int for ArduPilot, tuple[int,int,int] for PX4), or None if no valid data.
+            dict|None: Dictionary mapping mode names (str) to IDs (int for ArduPilot, tuple[int,int,int] for PX4), or None if no valid data.
 
         Note:
             Returns None if no valid HEARTBEAT message is received.
@@ -3585,33 +3813,33 @@ class MAVLinCS:
         except Exception:
             self.logger.exception('Error in recv_msg_callback')
 
-    def set_additional_recv_msg_callback(self, callback: Callable | None):
+    def set_additional_recv_msg_callback(self, callback: Callable|None):
         """Defines an additional callback to execute.
 
         Args:
-            callback (Callable | None): Callback with 1 function argument: the MAVLink message.
+            callback (Callable|None): Callback with 1 function argument: the MAVLink message.
 
         Note:
             Blocks actual message reception during this time (do not use a highly blocking function).
         """
         self._additional_recv_msg_callback = callback
 
-    def set_mcc_callback(self, callback: Callable | None):
+    def set_mcc_callback(self, callback: Callable|None):
         """Defines a callback to execute when an MCC is received.
 
         Args:
-            callback (Callable | None): Callback with 1 function argument: the received MCC (MCC class).
+            callback (Callable|None): Callback with 1 function argument: the received MCC (MCC class).
 
         Note:
             Blocks actual message reception during this time (do not use a highly blocking function).
         """
         self._mcc_callback = callback
 
-    def set_statustext_callback(self, callback: Callable | None):
+    def set_statustext_callback(self, callback: Callable|None):
         """Defines a callback to execute when a complete STATUSTEXT is received.
 
         Args:
-            callback (Callable | None): Callback with 1 function argument: the complete received STATUSTEXT message.
+            callback (Callable|None): Callback with 1 function argument: the complete received STATUSTEXT message.
 
         Note:
             Blocks actual message reception during this time (do not use a highly blocking function).
@@ -3634,11 +3862,11 @@ class MAVLinCS:
         except Exception:
             self.logger.exception('Error in send_callback')
 
-    def set_additional_send_callback(self, callback: Callable | None):
+    def set_additional_send_callback(self, callback: Callable|None):
         """Defines an additional callback to execute.
 
         Args:
-            callback (Callable | None): Callback with 1 function argument: the MAVLink message.
+            callback (Callable|None): Callback with 1 function argument: the MAVLink message.
         """
         self._additional_send_callback = callback
 

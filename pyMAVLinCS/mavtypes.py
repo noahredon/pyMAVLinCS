@@ -86,3 +86,23 @@ class GeographicPoint(NamedTuple):
     """Latitude of the GPS point (deg)."""
     longitude: float
     """Longitude of the GPS point (deg)."""
+
+class MissionItem(NamedTuple):
+    command: int
+    """MAV_CMD | Waypoint action (e.g., mavutil.mavlink.MAV_CMD_NAV_WAYPOINT)."""
+    x: float = 0.0
+    """Global: latitude in degrees, Local: x position in meters."""
+    y: float = 0.0
+    """Global: longitude in degrees, Local: y position in meters."""
+    z: float = 0.0
+    """Altitude in meters (relative or absolute, depending on the frame)."""
+    frame: int = 3
+    """MAV_FRAME | Coordinate system of the waypoint (default: 3 = MAV_FRAME_GLOBAL_RELATIVE_ALT)."""
+    param1: float = 0.0
+    """param1 (depending on the command)."""
+    param2: float = 0.0
+    """param2 (depending on the command)."""
+    param3: float = 0.0
+    """param3 (depending on the command)."""
+    param4: float = 0.0
+    """param4 (depending on the command)."""

@@ -2,41 +2,54 @@
 Example 3: Autonomous Waypoint Mission (AUTO Mode).
 
 Demonstrates how to generate a triangular waypoint mission around the
-starting location, upload it to the flight controller, start the mission,
-and monitor waypoint progression until completion.
+starting location, upload it reliably to the flight controller using
+upload_mission() (which handles the full MAVLink Mission Protocol
+MISSION_COUNT -> MISSION_REQUEST_INT / MISSION_REQUEST -> MISSION_ITEM_INT ->
+MISSION_ACK handshake with automatic retries), start the mission, and monitor
+waypoint progression until completion.
 """
 
 import time
 from pymavlink import mavutil
-from pyMAVLinCS import MAVLinCS
+from pyMAVLinCS import MAVLinCS, MissionItem
 
 
 def build_and_upload_mission(drone: MAVLinCS, lat0: float, lon0: float):
-    """Clears existing waypoints and uploads a triangular mission with Takeoff and RTL."""
-    print("Clearing previous mission...")
-    if not drone.clear_waypoints():
-        raise RuntimeError("Could not clear waypoints")
-
+    """Builds and uploads a triangular mission with Takeoff and RTL via upload_mission()."""
     # Compute 3 triangle vertices around the origin using Cartesian offsets (meters)
     wp1 = MAVLinCS.cartesian_to_geographic_point(lat0, lon0, north_displacement=25.0, east_displacement=0.0)
     wp2 = MAVLinCS.cartesian_to_geographic_point(lat0, lon0, north_displacement=25.0, east_displacement=25.0)
     wp3 = MAVLinCS.cartesian_to_geographic_point(lat0, lon0, north_displacement=0.0, east_displacement=25.0)
 
-    # Define mission items: (MAV_CMD, lat, lon, relative_alt)
+    # Define mission items using MissionItem (tuples (cmd, lat, lon, alt) or dicts are also supported)
     # Note: Sequence 0 on ArduPilot is reserved for the HOME position
     mission_items = [
-        (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, lat0, lon0, 0.0),               # Seq 0: HOME
-        (mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, lat0, lon0, 12.0),               # Seq 1: Takeoff to 12m
-        (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, wp1.latitude, wp1.longitude, 12.0),  # Seq 2: Corner 1
-        (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, wp2.latitude, wp2.longitude, 18.0),  # Seq 3: Corner 2 (climb to 18m)
-        (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, wp3.latitude, wp3.longitude, 12.0),  # Seq 4: Corner 3 (descend to 12m)
-        (mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH, 0.0, 0.0, 0.0),         # Seq 5: RTL
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=lat0, y=lon0, z=0.0),               # Seq 0: HOME
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, x=lat0, y=lon0, z=12.0),               # Seq 1: Takeoff to 12m
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=wp1.latitude, y=wp1.longitude, z=12.0),  # Seq 2: Corner 1
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=wp2.latitude, y=wp2.longitude, z=18.0),  # Seq 3: Corner 2 (climb to 18m)
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=wp3.latitude, y=wp3.longitude, z=12.0),  # Seq 4: Corner 3 (descend to 12m)
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH),                              # Seq 5: RTL
     ]
 
-    print(f"Uploading {len(mission_items)} waypoints...")
-    drone.send_waypoint_count(len(mission_items))
+    print(f"Uploading {len(mission_items)} waypoints via MAVLink Mission Protocol...")
+    if not drone.upload_mission(waypoints=mission_items, clear_existing=True, timeout=15.0):
+        raise RuntimeError("Mission upload failed or was not acknowledged by the flight controller")
+    print("Mission uploaded successfully!")
 
-    for seq, (cmd, lat, lon, alt) in enumerate(mission_items):
+
+def upload_mission_low_level_example(drone: MAVLinCS, lat0: float, lon0: float):
+    """Alternative low-level manual upload using clear_waypoints, send_waypoint_count, and send_waypoint."""
+    if not drone.clear_waypoints():
+        raise RuntimeError("Could not clear waypoints")
+
+    wps = [
+        (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, lat0, lon0, 0.0),
+        (mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, lat0, lon0, 10.0),
+        (mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH, 0.0, 0.0, 0.0),
+    ]
+    drone.send_waypoint_count(len(wps))
+    for seq, (cmd, lat, lon, alt) in enumerate(wps):
         time.sleep(0.05)
         drone.send_waypoint(
             waypoint_index=seq,
@@ -46,10 +59,8 @@ def build_and_upload_mission(drone: MAVLinCS, lat0: float, lon0: float):
             y=lon,
             z=alt,
         )
-
     if not drone.wait_mission_ack(timeout=5):
-        raise RuntimeError("Mission upload was not acknowledged by the flight controller")
-    print("Mission uploaded successfully!")
+        raise RuntimeError("Low-level mission upload was not acknowledged")
 
 
 def main():

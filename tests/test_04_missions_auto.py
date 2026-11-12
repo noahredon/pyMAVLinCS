@@ -1,35 +1,23 @@
 import time
 from pymavlink import mavutil
-from pyMAVLinCS import MAVLinCS
+from pyMAVLinCS import MAVLinCS, MissionItem
 
 
 def _upload_mission(drone: MAVLinCS, lat0: float, lon0: float, include_takeoff_and_rtl: bool):
-    assert drone.clear_waypoints(timeout=3) is True
-
     p1 = MAVLinCS.cartesian_to_geographic_point(lat0, lon0, north_displacement=15.0, east_displacement=0.0)
     p2 = MAVLinCS.cartesian_to_geographic_point(lat0, lon0, north_displacement=15.0, east_displacement=15.0)
 
-    wps = [(mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, lat0, lon0, 0.0)]  # seq 0 = HOME
+    wps = [MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=lat0, y=lon0, z=0.0)]  # seq 0 = HOME
     if include_takeoff_and_rtl:
-        wps.append((mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, lat0, lon0, 10.0))
+        wps.append(MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, x=lat0, y=lon0, z=10.0))
 
-    wps.append((mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, p1.latitude, p1.longitude, 10.0))
-    wps.append((mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, p2.latitude, p2.longitude, 10.0))
+    wps.append(MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=p1.latitude, y=p1.longitude, z=10.0))
+    wps.append(MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=p2.latitude, y=p2.longitude, z=10.0))
 
     if include_takeoff_and_rtl:
-        wps.append((mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH, 0.0, 0.0, 0.0))
+        wps.append(MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH))
 
-    assert drone.send_waypoint_count(len(wps)) is True
-    for seq, (cmd, lat, lon, alt) in enumerate(wps):
-        time.sleep(0.05)
-        assert drone.send_waypoint(
-            waypoint_index=seq,
-            frame=mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,
-            command=cmd,
-            x=lat, y=lon, z=alt,
-        ) is True
-
-    assert drone.wait_mission_ack(timeout=5) is True
+    assert drone.upload_mission(waypoints=wps, clear_existing=True, timeout=15.0) is True
 
 
 def _wait_mission_completion(drone: MAVLinCS, timeout: float = 90.0) -> bool:

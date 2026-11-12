@@ -73,7 +73,8 @@ Utilize powerful built-in mathematical functions for complex navigation and coor
 ### ⚙️ Mission Planning and Waypoint Management
 
 Simplify the workflow for designing and executing automated `AUTO` missions:
-- 🔢 **Waypoint Management:** Clear stored missions (`clear_waypoints`), announce waypoint counts (`send_waypoint_count`), and upload individual mission items (`send_waypoint`).
+- 🔢 **Reliable Mission Upload:** Upload an entire list of waypoints (`MissionItem`, `dict`, or `tuple`) in a single call (`upload_mission`) implementing the full MAVLink Mission Protocol state machine (`MISSION_COUNT` -> `MISSION_REQUEST_INT` / `MISSION_REQUEST` -> `MISSION_ITEM_INT` -> `MISSION_ACK`) with automatic retries on packet loss.
+- 🛠️ **Low-Level Waypoint Primitives:** Clear stored missions (`clear_waypoints`), announce waypoint counts (`send_waypoint_count`), and upload individual mission items (`send_waypoint`).
 - ▶️ **Mission Execution:** Start the loaded mission from the ground or in flight (`start_mission`).
 - ✅ **Mission Status:** Check the active waypoint sequence number (`current_waypoint_seq`) and verify if the waypoint mission is completed (`is_waypoint_mission_completed`).
 
@@ -253,7 +254,29 @@ print(f"Roll: {angles.roll:.2f} rad, Pitch: {angles.pitch:.2f} rad, Yaw: {angles
 print(f"Battery: {drone.battery_percentage()}% ({drone.battery_voltage():.2f}V)")
 ```
 
-### 4. Mission Control Codes (MCC) & Callbacks
+### 4. Uploading and Running an Autonomous Waypoint Mission
+
+Use `MissionItem` and `upload_mission()` to reliably transfer a full `AUTO` mission to the flight controller using the MAVLink Mission Protocol handshake:
+
+```python
+from pymavlink import mavutil
+from pyMAVLinCS import MAVLinCS, MissionItem
+
+gps0 = drone.position_gps()
+wp1 = MAVLinCS.cartesian_to_geographic_point(gps0.lat, gps0.lon, north_displacement=30.0, east_displacement=0.0)
+
+mission = [
+    MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=gps0.lat, y=gps0.lon, z=0.0),      # Seq 0: HOME
+    MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, x=gps0.lat, y=gps0.lon, z=15.0),      # Seq 1: Takeoff
+    MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=wp1.latitude, y=wp1.longitude, z=15.0),
+    MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH),                             # Seq 3: RTL
+]
+
+if drone.upload_mission(waypoints=mission, clear_existing=True, timeout=15.0):
+    drone.start_mission(timeout=10)
+```
+
+### 5. Mission Control Codes (MCC) & Callbacks
 
 pyMAVLinCS provides Mission Control Codes (`MCC`) to simplify event synchronization between ground stations and companion computers over MAVLink (`NAMED_VALUE_INT`):
 
@@ -279,7 +302,7 @@ if drone.check_mcc(DRONE_READY):
     drone.delete_mcc(DRONE_READY)
 ```
 
-### 5. Closing the Connection
+### 6. Closing the Connection
 
 Always close the connection when finished to cleanly stop the background `MavThread`, close the serial/UDP link, and flush the `.tlog` file:
 

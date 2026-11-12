@@ -3,7 +3,7 @@ import math
 import time
 import pytest
 from pymavlink import mavutil
-from pyMAVLinCS import MAVLinCS, MCC, setup_logger
+from pyMAVLinCS import MAVLinCS, MCC, MissionItem, setup_logger
 from pyMAVLinCS.mavecstra import MavLogger, StatustextReceiver
 from pyMAVLinCS.mission_control_code import EMPTY
 
@@ -254,6 +254,111 @@ def test_offline_open_close_and_thread_lifecycle(tmp_path):
     assert mav.mavthread.is_thread_active() is False
 
 
+def test_upload_mission_offline_handshake_and_retries():
+    # Initialize an offline MAVLinCS instance without waiting for a heartbeat
+    mav = MAVLinCS(
+        address="udpin:127.0.0.1:0",
+        timeout_heartbeat=0,
+        pos_rate=0,
+        mavlogfile=None,
+    )
+    try:
+        # 1. Input validation edge cases
+        assert mav.upload_mission([], clear_existing=False) is False
+        assert mav.upload_mission([{"x": 1.0, "y": 2.0}], clear_existing=False) is False
+        assert mav.upload_mission([(16, 1.0)], clear_existing=False) is False
+        assert mav.upload_mission([12345], clear_existing=False) is False
+        assert mav.upload_mission([(16, 0.0, 0.0, 10.0)], clear_existing=False, timeout=0) is False
+
+        # 2. Simulate an autopilot responding to MISSION_COUNT & MISSION_ITEM_INT
+        #    Including a simulated dropped first MISSION_COUNT to test automatic retry!
+        sent_messages = []
+        count_attempts = 0
+        item1_attempts = 0
+        ap_mav = mavutil.mavlink.MAVLink(None, srcSystem=1, srcComponent=1)
+
+        def push_incoming(msg):
+            msg.pack(ap_mav)
+            msg._timestamp = time.time()
+            with mav.mavthread._lock:
+                mav.mavthread._queue.append(msg)
+                mav.mavthread._msg_received.set()
+
+        def on_gcs_send(m):
+            nonlocal count_attempts, item1_attempts
+            sent_messages.append(m)
+            mtype = m.get_type()
+            if mtype == "MISSION_CLEAR_ALL":
+                ack = ap_mav.mission_ack_encode(
+                    mav.master.source_system,
+                    mav.master.source_component,
+                    mavutil.mavlink.MAV_MISSION_ACCEPTED,
+                    mavutil.mavlink.MAV_MISSION_TYPE_MISSION,
+                )
+                push_incoming(ack)
+            elif mtype == "MISSION_COUNT":
+                count_attempts += 1
+                # Drop the 1st MISSION_COUNT to trigger a retry, respond on the 2nd
+                if count_attempts >= 2:
+                    req0 = ap_mav.mission_request_encode(
+                        mav.master.source_system,
+                        mav.master.source_component,
+                        0,
+                        mavutil.mavlink.MAV_MISSION_TYPE_MISSION,
+                    )
+                    push_incoming(req0)
+            elif mtype == "MISSION_ITEM_INT":
+                if m.seq == 0:
+                    req1 = ap_mav.mission_request_int_encode(
+                        mav.master.source_system,
+                        mav.master.source_component,
+                        1,
+                        mavutil.mavlink.MAV_MISSION_TYPE_MISSION,
+                    )
+                    push_incoming(req1)
+                elif m.seq == 1:
+                    item1_attempts += 1
+                    # Drop the 1st transmission of seq=1 to trigger a retry, accept on the 2nd
+                    if item1_attempts >= 2:
+                        req2 = ap_mav.mission_request_int_encode(
+                            mav.master.source_system,
+                            mav.master.source_component,
+                            2,
+                            mavutil.mavlink.MAV_MISSION_TYPE_MISSION,
+                        )
+                        push_incoming(req2)
+                elif m.seq == 2:
+                    ack = ap_mav.mission_ack_encode(
+                        mav.master.source_system,
+                        mav.master.source_component,
+                        mavutil.mavlink.MAV_MISSION_ACCEPTED,
+                        mavutil.mavlink.MAV_MISSION_TYPE_MISSION,
+                    )
+                    push_incoming(ack)
+
+        mav.set_additional_send_callback(on_gcs_send)
+
+        # Mix MissionItem, dict, and tuple formats in the same mission
+        mixed_waypoints = [
+            MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=48.0, y=2.0, z=0.0),
+            {"command": mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, "lat": 48.0, "lon": 2.0, "alt": 10.0},
+            (mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH, 0.0, 0.0, 0.0),
+        ]
+
+        ok = mav.upload_mission(
+            waypoints=mixed_waypoints,
+            clear_existing=True,
+            timeout=5.0,
+            retry_timeout=0.05,
+            max_retries=3,
+        )
+        assert ok is True
+        assert count_attempts == 2
+        assert item1_attempts == 2
+    finally:
+        mav.close()
+
+
 def test_safety_guards_and_invalid_inputs(drone):
     # PWM out of bounds [1000, 2000]
     assert drone.set_servo(servo_channel=9, pwm=950) is False
@@ -304,6 +409,7 @@ def test_safety_guards_and_invalid_inputs(drone):
     assert drone.send_waypoint_count(1) is False
     assert drone.send_waypoint(0) is False
     assert drone.clear_waypoints() is False
+    assert drone.upload_mission([(16, 0.0, 0.0, 10.0)]) is False
     assert drone.start_mission() is False
     assert drone.reboot() is False
     assert drone.do_follow(target_system=2) is None
