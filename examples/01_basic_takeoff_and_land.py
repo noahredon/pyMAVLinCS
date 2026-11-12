@@ -24,11 +24,16 @@ def main():
             return
 
         # 2. Display basic telemetry
-        print(f"Autopilot : {drone.autopilot_str()}")
+        print(f"Autopilot : {drone.autopilot_str()} (ID: {drone.autopilot_int()})")
+        print(f"3D GPS Fix: {drone.gps_3d_fix()}")
         print(f"Mode      : {drone.mode()}")
+        print(f"Armed     : {drone.motors_armed()} (Disarmed: {drone.motors_disarmed()})")
         print(f"Battery   : {drone.battery_percentage()}% ({drone.battery_voltage()} V)")
         print(f"GPS Pos   : {drone.position_gps()}")
+        print(f"Local Pos : {drone.position_local()}")
         print(f"Attitude  : {drone.angles()}")
+        print(f"Ang Rates : {drone.angular_rates()}")
+        print(f"Velocity  : {drone.speed()} (|v| = {drone.speed_module():.2f} m/s)")
 
         # 3. Arm the vehicle (automatically switches to GUIDED if needed on ArduPilot)
         print("Arming motors...")

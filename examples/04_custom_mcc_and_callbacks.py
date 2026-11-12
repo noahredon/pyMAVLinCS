@@ -52,9 +52,27 @@ def main():
     )
 
     try:
-        # Register callbacks
+        # Look up registered MCCs by numeric value or by name
+        print(f"Lookup MCC 101 -> {MCC.get(101)}")
+        print(f"Lookup 'TARGET_DETECTED' -> {MCC.get_name('TARGET_DETECTED')}")
+
+        # Register high-level and packet-level callbacks
         drone.set_statustext_callback(on_autopilot_statustext)
         drone.set_mcc_callback(on_mcc_received)
+
+        sent_packet_count = 0
+        recv_packet_count = 0
+
+        def on_msg_sent(msg):
+            nonlocal sent_packet_count
+            sent_packet_count += 1
+
+        def on_msg_received(msg):
+            nonlocal recv_packet_count
+            recv_packet_count += 1
+
+        drone.set_additional_send_callback(on_msg_sent)
+        drone.set_additional_recv_msg_callback(on_msg_received)
 
         # Send a status text message to the GCS / flight log
         drone.send_statustext("Companion computer online and connected via pyMAVLinCS")
@@ -66,15 +84,23 @@ def main():
         latency_ms = drone.get_latence_ms_with_sysidcompid(autopilot_key)
         print(f"Estimated one-way link latency: {latency_ms} ms")
 
-        # Send and verify custom MCC states
+        # Retrieve the last complete STATUSTEXT received from the autopilot
+        last_status = drone.last_statustext_from_sysidcompid(autopilot_key)
+        if last_status is not None:
+            print(f"Last autopilot STATUSTEXT: {last_status.text}")
+
+        # Send a generic NAMED_VALUE_INT metric and custom MCC states
+        drone.send_named_value_int(value=42, name="CPU_TEMP")
         drone.send_mcc(MCC_PAYLOAD_READY)
         if drone.check_mcc(MCC_PAYLOAD_READY):
             print("Confirmed: PAYLOAD_READY state is active.")
             drone.delete_mcc(MCC_PAYLOAD_READY)
 
-        # Actuate a payload servo on channel 9
+        # Actuate a payload servo on channel 9 and read back its PWM output
         drone.set_servo(servo_channel=9, pwm=1500)
-        time.sleep(1.0)
+        time.sleep(0.5)
+        print(f"Servo 9 PWM: {drone.servo_pwm(servo_channel=9)}")
+        print(f"Packets observed by callbacks -> Sent: {sent_packet_count}, Received: {recv_packet_count}")
 
     except KeyboardInterrupt:
         drone.mission_ended = True
