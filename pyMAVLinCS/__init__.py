@@ -405,7 +405,7 @@ class MAVLinCS:
             )
             if high_latency2:
                 return mavutil.mode_string_v10(high_latency2)
-            return "UNKNOW"
+            return "UNKNOWN"
         elif float(mavutil.mavlink.WIRE_PROTOCOL_VERSION) == 0.9:
             # MAVLink 0.9
             sys_status = self.get_msg(
@@ -414,8 +414,8 @@ class MAVLinCS:
             )
             if sys_status:
                 return mavutil.mode_string_v09(sys_status)
-            return "UNKNOW"
-        return "UNKNOW"
+            return "UNKNOWN"
+        return "UNKNOWN"
 
     def custom_mode(self, source_system: int|None = None) -> int|float:
         """Flight mode as an integer (ArduPilot). On PX4, allows retrieving the Custom Main Mode and Custom Sub Mode.
@@ -528,7 +528,7 @@ class MAVLinCS:
             str: Autopilot (e.g.: 'MAV_AUTOPILOT_PX4', 'MAV_AUTOPILOT_ARDUPILOTMEGA').
 
         Note:
-            Returns 'UNKNOW' if no valid data has been received.
+            Returns 'UNKNOWN' if no valid data has been received.
         """
         m = self.get_msg(
             msg_type="HEARTBEAT",
@@ -536,9 +536,9 @@ class MAVLinCS:
         )
         if m:
             if m.autopilot not in mavutil.mavlink.enums["MAV_AUTOPILOT"]:
-                return f"UNKNOW: {m.autopilot}"
+                return f"UNKNOWN: {m.autopilot}"
             return mavutil.mavlink.enums["MAV_AUTOPILOT"][m.autopilot].name
-        return "UNKNOW"
+        return "UNKNOWN"
 
     def battery_percentage(self, source_system: int|None = None) -> int|float:
         """Remaining battery (requires proper configuration of the flight controller).
@@ -1952,11 +1952,14 @@ class MAVLinCS:
                 source_system=target_system,
                 timeout=timeout_ack
             )
-            if accepted is None:
-                self.logger.critical("Takeoff failed: insufficient data")
+            if accepted is None: # End of mission or Timeout
+                if self.mission_ended:
+                    self.logger.critical("End of mission")
+                else:
+                    self.logger.critical("Takeoff failed: ack timeout")
                 return False
-            elif not accepted:
-                self.logger.critical("Takeoff failed: ack timeout")
+            elif not accepted: # Refused
+                self.logger.error("Takeoff failed: refused")
                 return False
 
         _, _, relative_alt, _ = self.position_gps(source_system=target_system)
@@ -3541,11 +3544,11 @@ class MAVLinCS:
                 if m.command in mavutil.mavlink.enums["MAV_CMD"]:
                     command = mavutil.mavlink.enums["MAV_CMD"][m.command].name[8:]
                 else:
-                    command = f"UNKNOW MAV_CMD ({m.command})"
+                    command = f"UNKNOWN MAV_CMD ({m.command})"
                 if m.result in mavutil.mavlink.enums["MAV_RESULT"]:
                     result = mavutil.mavlink.enums["MAV_RESULT"][m.result].name[11:]
                 else:
-                    result = f"UNKNOW MAV_RESULT ({m.result})"
+                    result = f"UNKNOWN MAV_RESULT ({m.result})"
                 if m.command not in self._command_ack_to_hide:
                     self.logger.info("Got COMMAND_ACK: %s: %s", command, result)
                 else:
@@ -3555,11 +3558,11 @@ class MAVLinCS:
                 if m.mission_type in mavutil.mavlink.enums["MAV_MISSION_TYPE"]:
                     t = mavutil.mavlink.enums["MAV_MISSION_TYPE"][m.mission_type].name[12:]
                 else:
-                    t = f"UNKNOW MAV_MISSION_TYPE ({m.mission_type})"
+                    t = f"UNKNOWN MAV_MISSION_TYPE ({m.mission_type})"
                 if m.type in mavutil.mavlink.enums["MAV_MISSION_RESULT"]:
                     res = mavutil.mavlink.enums["MAV_MISSION_RESULT"][m.type].name[12:]
                 else:
-                    res = f"UNKNOW MAV_MISSION_RESULT ({m.type})"
+                    res = f"UNKNOWN MAV_MISSION_RESULT ({m.type})"
                 self.logger.info("Got MISSION_ACK: %s: %s", t, res)
             elif m.get_type() == "STATUSTEXT":
                 result = self.statustext_receiver.parse(m)

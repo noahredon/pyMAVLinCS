@@ -3,11 +3,6 @@ from pymavlink import mavutil
 from pyMAVLinCS import MAVLinCS
 
 
-import time
-from pymavlink import mavutil
-from pyMAVLinCS import MAVLinCS
-
-
 def _upload_mission(drone: MAVLinCS, lat0: float, lon0: float, include_takeoff_and_rtl: bool):
     assert drone.clear_waypoints(timeout=3) is True
 
