@@ -302,12 +302,15 @@ if drone.check_mcc(DRONE_READY):
     drone.delete_mcc(DRONE_READY)
 ```
 
-### 6. Closing the Connection
+### 6. Closing the Connection (or Using a Context Manager)
 
-Always close the connection when finished to cleanly stop the background `MavThread`, close the serial/UDP link, and flush the `.tlog` file:
+Always close the connection when finished to cleanly stop the background `MavThread`, close the serial/UDP link, and flush the `.tlog` file. You can either call `drone.close()` explicitly or use `MAVLinCS` as a Python context manager (`with` statement):
 
 ```python
-drone.close()
+with MAVLinCS(address="udpin:127.0.0.1:14550", mavlogfile="flight.tlog") as drone:
+    drone.wait_gps_3d_fix(timeout=30)
+    print(drone.position_gps())
+# Connection, background thread, and .tlog file are automatically closed here
 ```
 
 ***

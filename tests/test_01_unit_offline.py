@@ -253,6 +253,17 @@ def test_offline_open_close_and_thread_lifecycle(tmp_path):
     mav.close()
     assert mav.mavthread.is_thread_active() is False
 
+    # Context manager (__enter__ / __exit__) closes connection on normal exit and on exception
+    with MAVLinCS(address="udpin:127.0.0.1:0", timeout_heartbeat=0, pos_rate=0, mavlogfile=None) as ctx_mav:
+        assert ctx_mav.mavthread.is_thread_active() is True
+    assert ctx_mav.mavthread.is_thread_active() is False
+
+    with pytest.raises(RuntimeError, match="boom"):
+        with MAVLinCS(address="udpin:127.0.0.1:0", timeout_heartbeat=0, pos_rate=0, mavlogfile=None) as err_mav:
+            assert err_mav.mavthread.is_thread_active() is True
+            raise RuntimeError("boom")
+    assert err_mav.mavthread.is_thread_active() is False
+
 
 def test_upload_mission_offline_handshake_and_retries():
     # Initialize an offline MAVLinCS instance without waiting for a heartbeat

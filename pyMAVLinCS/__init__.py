@@ -3907,6 +3907,28 @@ class MAVLinCS:
         
         self.logger.info("Connection closed")
 
+    def __enter__(self) -> "MAVLinCS":
+        """Enters the runtime context related to this object.
+
+        Returns:
+            MAVLinCS: The active MAVLinCS instance.
+        """
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        """Exits the runtime context and ensures the connection and threads are properly closed.
+
+        Args:
+            exc_type: Exception type if an exception was raised in the with block, else None.
+            exc_val: Exception instance if an exception was raised, else None.
+            exc_tb: Traceback if an exception was raised, else None.
+
+        Returns:
+            bool: False so that any exception raised inside the with block is propagated.
+        """
+        self.close()
+        return False
+
     # --------------------------------------------------------------------------
     # Reception of MAVLink messages that do not involve any physical interaction
     # --------------------------------------------------------------------------
