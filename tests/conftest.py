@@ -95,8 +95,12 @@ def drone(sitl, tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
-def reset_drone_flags(drone):
-    """Automatically resets states and callbacks between each test."""
+def reset_drone_flags(request):
+    """Automatically resets states and callbacks between each test that uses the drone fixture."""
+    if "drone" not in request.fixturenames:
+        yield
+        return
+    drone = request.getfixturevalue("drone")
     drone.mission_ended = False
     drone.allow_actions = True
     drone.set_additional_recv_msg_callback(None)

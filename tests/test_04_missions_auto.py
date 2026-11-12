@@ -34,8 +34,13 @@ def _upload_mission(drone: MAVLinCS, lat0: float, lon0: float, include_takeoff_a
 
 def _wait_mission_completion(drone: MAVLinCS, timeout: float = 90.0) -> bool:
     start = time.time()
+    saw_valid_seq = False
     while time.time() - start < timeout:
+        seq = drone.current_waypoint_seq()
+        if seq is not None and seq >= 0:
+            saw_valid_seq = True
         if drone.is_waypoint_mission_completed():
+            assert saw_valid_seq is True
             return True
         time.sleep(0.5)
     return False

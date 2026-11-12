@@ -4,6 +4,13 @@ from pyMAVLinCS import MAVLinCS
 
 
 def test_guided_full_flight_sequence(drone):
+    # 0. Ground arming (wait_motors_armed) and explicit disarm() verification
+    assert drone.arm(timeout_ack=3, timeout_arming=0) is True
+    assert drone.wait_motors_armed(timeout=10) is True
+    assert drone.motors_armed() is True
+    assert drone.disarm(timeout_ack=3, timeout_disarming=10) is True
+    assert drone.motors_disarmed() is True
+
     # 1. Arm and Takeoff to 10m
     assert drone.arm(timeout_ack=3, timeout_arming=10) is True
     assert drone.motors_armed() is True
@@ -41,7 +48,7 @@ def test_guided_full_flight_sequence(drone):
         timeout=30,
     ) is True
 
-    # 5. Servo PWM and Gimbal Target (ROI) control
+    # 5. Servo PWM, Gimbal commands, and Landing Target streaming
     assert drone.set_servo(servo_channel=9, pwm=1850) is True
     time.sleep(0.4)
     assert math.isclose(drone.servo_pwm(9), 1850, abs_tol=5)
@@ -54,6 +61,14 @@ def test_guided_full_flight_sequence(drone):
             longitude=home.longitude_home,
             altitude=home.altitude_home,
         ) is True
+
+    # Gimbal orientation / mode commands (returns bool depending on SITL mount config)
+    assert isinstance(drone.set_gimbal_neutral(timeout_ack=1), bool)
+    assert isinstance(drone.set_gimbal_angles(pitch=-45.0, yaw=0.0, timeout_ack=1), bool)
+    assert isinstance(drone.set_gimbal_retract(timeout_ack=1), bool)
+
+    # Stream a precision landing target offset in BODY_FRD frame
+    drone.send_landing_target(x=0.2, y=-0.1, z=14.0)
 
     # 6. Speed control (set_speed) for 6 seconds at 3.5 m/s
     target_speed = 3.5
@@ -72,6 +87,8 @@ def test_guided_full_flight_sequence(drone):
     assert drone.set_speed(vx=0.0, vy=0.0, vz=0.0) is True
     time.sleep(1.5)
 
-    # 7. Landing and disarmament check
+    # 7. Test Return-To-Launch (RTL) transition, then Land and verify disarmament
+    assert drone.return_to_launch(timeout_ack=3) is True
+    assert drone.wait_mode_changed("RTL", timeout=5) is True
     assert drone.land(timeout_land=60) is True
     assert drone.motors_disarmed() is True
