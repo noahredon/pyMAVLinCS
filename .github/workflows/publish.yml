@@ -1,4 +1,4 @@
-name: Publish pyMAVLinCS to PyPI
+name: Publish pyMAVLinCS to PyPI and Update Docs
 
 on:
   push:
@@ -13,9 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     steps:
-
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -28,7 +27,7 @@ jobs:
           fi
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
@@ -46,3 +45,52 @@ jobs:
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
         run: |
           twine upload dist/*
+
+  # -------------------------------------------------------------
+  # Job automatique : Génération et mise à jour de la documentation
+  # -------------------------------------------------------------
+  update-documentation:
+    needs: build-and-publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pyMAVLinCS (library)
+        uses: actions/checkout@v4
+        with:
+          path: pyMAVLinCS
+
+      - name: Checkout pyMAVLinCS-documentation
+        uses: actions/checkout@v4
+        with:
+          repository: noahredon/pyMAVLinCS-documentation
+          token: ${{ secrets.DOCS_PAT }}
+          path: pyMAVLinCS-documentation
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install library and Sphinx dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ./pyMAVLinCS
+          pip install sphinx sphinx_rtd_theme sphinx_autodoc_typehints
+
+      - name: Generate documentation with auto_doc.py
+        working-directory: pyMAVLinCS-documentation
+        run: |
+          python auto_doc.py --source-dir ../pyMAVLinCS/pyMAVLinCS
+
+      - name: Commit, tag and push to pyMAVLinCS-documentation
+        working-directory: pyMAVLinCS-documentation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add build/ documentation.html
+          if git diff --staged --quiet; then
+            echo "Aucun changement dans la doc HTML."
+          else
+            git commit -m "Release ${{ github.ref_name }}"
+            git tag ${{ github.ref_name }}
+            git push origin main --tags
+          fi
