@@ -14,7 +14,7 @@ from pymavlink import mavutil
 from pyMAVLinCS.mavecstra import MavThread, TimesyncHandler, StatustextReceiver, MavLogger
 from pyMAVLinCS import mavtypes
 from pyMAVLinCS.mission_control_code import MCC, EMPTY
-from pyMAVLinCS.setup_logger import default_logger
+from pyMAVLinCS.setup_logger import setup_logger, default_logger
 
 class MAVLinCS:
     """Allows connection to one or more flight controllers on one link."""
