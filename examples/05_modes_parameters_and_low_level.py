@@ -46,12 +46,18 @@ def main():
         print("\nConfiguring ATTITUDE stream rate to 10 Hz...")
         drone.set_msg_rate(msg_type="ATTITUDE", rate=10.0, timeout_ack=2)
 
-        print("Writing parameter SYSID_MYGCS = 255...")
-        drone.write_parameter(
-            parameter="SYSID_MYGCS",
-            value=255,
-            param_type=mavutil.mavlink.MAV_PARAM_TYPE_INT16,
-        )
+        print("Requesting full parameter list to populate local cache...")
+        drone.request_all_parameters()
+
+        print("Writing parameter PILOT_THR_FILT = 1.0 Hz and waiting for PARAM_VALUE confirmation...")
+        if drone.write_parameter(
+            parameter="PILOT_THR_FILT",
+            value=1.0,
+            timeout_ack=2.0,
+        ):
+            thr_filt = drone.get_parameter("PILOT_THR_FILT", use_cache=False, timeout=2.0)
+            print(f"Confirmed PILOT_THR_FILT = {thr_filt:.1f} Hz")
+            drone.write_parameter(parameter="PILOT_THR_FILT", value=0.0, timeout_ack=2.0)
 
         # Retrieve the latest cached HEARTBEAT message (at most 2 seconds old)
         hb_msg = drone.get_msg(msg_type="HEARTBEAT", max_age=2.0)

@@ -359,6 +359,101 @@ def test_upload_mission_offline_handshake_and_retries():
         mav.close()
 
 
+def test_get_and_write_parameter_offline():
+    mav = MAVLinCS(
+        address="udpin:127.0.0.1:0",
+        timeout_heartbeat=0,
+        pos_rate=0,
+        mavlogfile=None,
+    )
+    try:
+        # 1. Input validation edge cases
+        assert math.isnan(mav.get_parameter(""))
+        assert math.isnan(mav.get_parameter("PARAM_NAME_TOO_LONG_17"))
+        assert math.isnan(mav.get_parameter("SYSID_MYGCS", timeout=0))
+        assert mav.write_parameter("", 1.0) is False
+        assert mav.write_parameter("PARAM_NAME_TOO_LONG_17", 1.0) is False
+        assert mav.write_parameter("SYSID_MYGCS", math.nan) is False
+        assert mav.write_parameter("SYSID_MYGCS", math.inf) is False
+
+        # 2. timeout_ack=0 sends PARAM_SET without waiting for confirmation
+        assert mav.write_parameter("SYSID_MYGCS", 255, timeout_ack=0) is True
+
+        # 3. Simulate autopilot parameter protocol with packet loss & read-only rejection
+        ap_mav = mavutil.mavlink.MAVLink(None, srcSystem=1, srcComponent=1)
+        param_set_attempts = 0
+        param_read_attempts = 0
+        param_list_requested = False
+
+        def push_param_value(name: str, val: float):
+            pkt = ap_mav.param_value_encode(
+                name.encode("ascii"),
+                float(val),
+                mavutil.mavlink.MAV_PARAM_TYPE_REAL32,
+                100,
+                0,
+            ).pack(ap_mav)
+            msg = mav.master.mav.decode(bytearray(pkt))
+            mav.master.post_message(msg)
+
+        def on_gcs_send(m):
+            nonlocal param_set_attempts, param_read_attempts, param_list_requested
+            mtype = m.get_type()
+            if mtype == "PARAM_REQUEST_LIST":
+                param_list_requested = True
+                push_param_value("RTL_ALT", 1500.0)
+            elif mtype == "PARAM_SET":
+                pid = (m.param_id.decode("ascii", errors="ignore") if isinstance(m.param_id, bytes) else str(m.param_id)).rstrip("\x00")
+                if pid == "WPNAV_SPEED":
+                    param_set_attempts += 1
+                    # Drop the 1st PARAM_SET to trigger a retry, confirm on the 2nd
+                    if param_set_attempts >= 2:
+                        push_param_value("WPNAV_SPEED", m.param_value)
+                elif pid == "READONLY_PARAM":
+                    # Simulate ArduPilot rejecting a read-only parameter by returning old_value=10.0
+                    push_param_value("READONLY_PARAM", 10.0)
+            elif mtype == "PARAM_REQUEST_READ":
+                pid = (m.param_id.decode("ascii", errors="ignore") if isinstance(m.param_id, bytes) else str(m.param_id)).rstrip("\x00")
+                if pid == "BATT_LOW_VOLT":
+                    param_read_attempts += 1
+                    # Drop the 1st PARAM_REQUEST_READ to trigger a retry, reply on the 2nd
+                    if param_read_attempts >= 2:
+                        push_param_value("BATT_LOW_VOLT", 10.5)
+
+        mav.set_additional_send_callback(on_gcs_send)
+
+        # Write parameter with retry and confirmation
+        assert mav.write_parameter(
+            "WPNAV_SPEED",
+            500.0,
+            timeout_ack=2.0,
+            retry_timeout=0.05,
+            max_retries=3,
+        ) is True
+        assert param_set_attempts == 2
+
+        # Write read-only parameter -> returns False because confirmed value (10.0) != requested (99.0)
+        assert mav.write_parameter("READONLY_PARAM", 99.0, timeout_ack=1.0) is False
+
+        # Read parameter with retry
+        val = mav.get_parameter("BATT_LOW_VOLT", timeout=2.0, retry_timeout=0.05, max_retries=3)
+        assert math.isclose(val, 10.5, rel_tol=1e-5)
+        assert param_read_attempts == 2
+
+        # Subsequent call with use_cache=True returns cached value from master.param_state without network request
+        assert "BATT_LOW_VOLT" in mav.master.param_state[(1, 1)].params
+        cached_val = mav.get_parameter("BATT_LOW_VOLT", use_cache=True)
+        assert math.isclose(cached_val, 10.5, rel_tol=1e-5)
+        assert param_read_attempts == 2
+
+        # Request all parameters to populate cache
+        assert mav.request_all_parameters() is True
+        assert param_list_requested is True
+        assert math.isclose(mav.get_parameter("RTL_ALT", use_cache=True), 1500.0, rel_tol=1e-5)
+    finally:
+        mav.close()
+
+
 def test_safety_guards_and_invalid_inputs(drone):
     # PWM out of bounds [1000, 2000]
     assert drone.set_servo(servo_channel=9, pwm=950) is False
@@ -431,6 +526,7 @@ def test_safety_guards_and_invalid_inputs(drone):
     assert drone.set_home_current_pos() is False
     assert drone.set_ekf_origin(0.0, 0.0, 0.0) is False
     assert math.isnan(drone.request_home_position().latitude_home)
+    assert math.isnan(drone.get_parameter("SYSID_MYGCS"))
     assert drone.send_timesync() is False
     assert drone.send_statustext("Should fail") is False
     assert drone.send_named_value_int(1, "TEST") is False

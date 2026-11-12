@@ -156,8 +156,12 @@ def test_callbacks_mcc_and_statustext(drone):
     last_st = drone.last_statustext_from_sysidcompid(ap_key)
     assert last_st is None or hasattr(last_st, "text")
 
-    # Write a harmless parameter
-    assert drone.write_parameter("SYSID_MYGCS", 255, mavutil.mavlink.MAV_PARAM_TYPE_INT16) is True
+    # Write and read back a harmless parameter with PARAM_VALUE confirmation, then request all parameters
+    assert drone.write_parameter("PILOT_THR_FILT", 1.0) is True
+    assert math.isclose(drone.get_parameter("PILOT_THR_FILT"), 1.0, abs_tol=1e-3)
+    assert math.isclose(drone.get_parameter("PILOT_THR_FILT", use_cache=True), 1.0, abs_tol=1e-3)
+    assert drone.write_parameter("PILOT_THR_FILT", 0.0) is True
+    assert drone.request_all_parameters() is True
 
     time.sleep(0.5)
     assert "NAMED_VALUE_INT" in sent_types

@@ -59,7 +59,7 @@ Execute mission-critical commands with built-in acknowledgment handling to ensur
 - 🏠 **Return to Launch (RTL):** Send a Return-To-Launch request (`return_to_launch`) for safe mission abort.
 - 🎯 **Dynamic Vehicle Following:** Autonomously take off and follow another moving MAVLink vehicle in real time (`do_follow`, `do_follow_with_takeoff`).
 - 🛬 **Precision Landing Target:** Stream visual/IR landing target offsets in the drone's body frame (`send_landing_target`).
-- 🔧 **System Configuration & Reboot:** Modify flight controller parameters on the fly (`write_parameter`), adjust telemetry message streaming rates (`set_msg_rate`), or trigger an autopilot reboot (`reboot`).
+- 🔧 **System Configuration & Reboot:** Request the full parameter list into cache (`request_all_parameters`), read and modify flight controller parameters on the fly with `PARAM_VALUE` confirmation and automatic retries (`get_parameter`, `write_parameter`), adjust telemetry message streaming rates (`set_msg_rate`), or trigger an autopilot reboot (`reboot`).
 - 🛡️ **Built-in Safety Switches:** Instantly inhibit physical flight commands (`allow_actions = False`) or abort all blocking waits across threads (`mission_ended = True`).
 
 ### 📐 Advanced Position and Geographic Utility

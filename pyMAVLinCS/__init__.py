@@ -828,6 +828,102 @@ class MAVLinCS:
         """
         return self.statustext_receiver.last_statustext_from_sysidcompid(key=key)
 
+    def get_parameter(self,
+            parameter: str,
+            use_cache: bool = False,
+            target_system: int|None = None,
+            **kwargs
+        ) -> float:
+        """Requests and returns the value of a flight controller parameter.
+
+        Args:
+            parameter (str): Parameter name (1 to 16 ASCII characters, e.g., 'PILOT_THR_FILT' or 'WPNAV_SPEED').
+            use_cache (bool): If True and the parameter has already been received, returns the cached value immediately without sending a network request. Default: False.
+            target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
+            **timeout (float|None): Overall timeout in seconds while waiting for PARAM_VALUE. 0 means no wait (returns cached value if use_cache=True, else NaN). None means no overall timeout. Default: 2.0.
+            **retry_timeout (float): Timeout in seconds before re-sending PARAM_REQUEST_READ if no response is received. Default: 0.5.
+            **max_retries (int): Maximum consecutive retries on timeout. Default: 3.
+
+        Returns:
+            float: Parameter value, or NaN if unavailable or timed out.
+        """
+        self.logger.debug("Getting parameter %s..", parameter)
+        timeout = kwargs.get('timeout', 2.0)
+        retry_timeout = float(kwargs.get('retry_timeout', 0.5))
+        max_retries = int(kwargs.get('max_retries', 3))
+
+        if self.mission_ended:
+            self.logger.critical("Mission stopped: Unable to get parameter")
+            return math.nan
+        if self.master is None:
+            self.logger.error("Master object is not defined!")
+            return math.nan
+        if not isinstance(parameter, str) or not parameter or len(parameter) > 16:
+            self.logger.error("Invalid parameter name '%s': must be 1 to 16 characters", parameter)
+            return math.nan
+
+        if target_system is None:
+            target_system = self.master.target_system
+
+        param_key = (target_system, mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1)
+        pstate = self.master.param_state.get(param_key)
+
+        if use_cache and pstate is not None and parameter in pstate.params:
+            return float(pstate.params[parameter])
+
+        if timeout == 0:
+            self.logger.warning("Zero timeout: not waiting for parameter %s", parameter)
+            return math.nan
+
+        if pstate is not None:
+            pstate.params.pop(parameter, None)
+
+        start_time = time.time()
+        last_send_time = start_time
+        self.master.mav.param_request_read_send(
+            target_system,
+            mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1,
+            parameter.encode("ascii"),
+            -1
+        )
+
+        retries = 0
+        while True:
+            if self.mission_ended:
+                self.logger.critical("Mission stopped: stop waiting for parameter %s", parameter)
+                return math.nan
+
+            pstate = self.master.param_state.get(param_key)
+            if pstate is not None and parameter in pstate.params:
+                val = float(pstate.params[parameter])
+                self.logger.info("Got parameter %s = %s", parameter, val)
+                return val
+
+            now = time.time()
+            if timeout is not None and now - start_time >= timeout:
+                self.logger.error("Timeout: unable to read parameter %s", parameter)
+                return math.nan
+
+            if now - last_send_time >= retry_timeout:
+                retries += 1
+                if retries > max_retries:
+                    self.logger.error("Failed to read parameter %s: max retries (%s) exceeded", parameter, max_retries)
+                    return math.nan
+
+                self.logger.warning(
+                    "No PARAM_VALUE received for %s: retrying PARAM_REQUEST_READ (attempt %s/%s)..",
+                    parameter, retries, max_retries
+                )
+                last_send_time = time.time()
+                self.master.mav.param_request_read_send(
+                    target_system,
+                    mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1,
+                    parameter.encode("ascii"),
+                    -1
+                )
+
+            time.sleep(0.02)
+
     # ---------
     # Commandes
     # ---------
@@ -1168,6 +1264,33 @@ class MAVLinCS:
         if math.isnan(home.latitude_home) or math.isnan(home.longitude_home) or math.isnan(home.altitude_home):
             self.logger.critical("Unable to receive HOME")
         return home
+
+    def request_all_parameters(self, target_system: int|None = None) -> bool:
+        """Requests the flight controller to stream all its parameters so they are cached.
+
+        Args:
+            target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
+
+        Returns:
+            bool: True if the request was sent, False otherwise.
+        """
+        self.logger.debug("Requesting all parameters..")
+        if self.mission_ended:
+            self.logger.critical("Mission stopped: Impossible to request all parameters")
+            return False
+        if self.master is None:
+            self.logger.error("Master object is not defined!")
+            return False
+
+        if target_system is None:
+            target_system = self.master.target_system
+
+        self.master.mav.param_request_list_send(
+            target_system,
+            mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1
+        )
+        self.logger.info("All parameters requested")
+        return True
 
     def send_timesync(self) -> bool:
         """Sends a TIMESYNC in broadcast to obtain connection latencies.
@@ -2089,24 +2212,34 @@ class MAVLinCS:
             time.sleep(0.05)
 
     def write_parameter(self,
-            parameter: str, value,
-            param_type: int,
-            target_system: int|None = None
+            parameter: str,
+            value: float|int,
+            param_type: int = mavutil.mavlink.MAV_PARAM_TYPE_REAL32,
+            target_system: int|None = None,
+            **kwargs
         ) -> bool:
-        """Modify a flight controller parameter.
+        """Modifies a flight controller parameter and waits for PARAM_VALUE confirmation.
 
         Args:
-            parameter (str): Parameter name.
-            value: Parameter value.
-            param_type (int): MAV_PARAM_TYPE | Parameter type.
+            parameter (str): Parameter name (1 to 16 ASCII characters).
+            value (float|int): Desired parameter value.
+            param_type (int): MAV_PARAM_TYPE | Parameter type (default: MAV_PARAM_TYPE_REAL32).
             target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
+            **timeout_ack (float|None): Timeout in seconds while waiting for the confirming PARAM_VALUE. 0 means no wait after sending (returns True immediately). None means no overall timeout. Default: 2.0.
+            **retry_timeout (float): Timeout in seconds before re-sending PARAM_SET if no PARAM_VALUE is received. Default: 0.5.
+            **max_retries (int): Maximum consecutive retries on timeout. Default: 3.
+            **tolerance (float): Relative/absolute tolerance when verifying the confirmed parameter value. Default: 1e-4.
 
         Returns:
-            bool: True if the command was sent, False otherwise.
+            bool: True if the parameter was set and confirmed (or sent when timeout_ack=0), False otherwise.
         """
-        # To know the associated param_type, ask ChatGPT, it works well
         # Note: some parameters require a reboot to take effect (check Mission Planner when changing them manually)
-        self.logger.debug("Writing parameter..")
+        self.logger.debug("Writing parameter %s = %s..", parameter, value)
+        timeout_ack = kwargs.get('timeout_ack', 2.0)
+        retry_timeout = float(kwargs.get('retry_timeout', 0.5))
+        max_retries = int(kwargs.get('max_retries', 3))
+        tolerance = float(kwargs.get('tolerance', 1e-4))
+
         if self.mission_ended:
             self.logger.critical("Mission stopped: Unable to write parameter")
             return False
@@ -2116,18 +2249,81 @@ class MAVLinCS:
         if self.master is None:
             self.logger.error("Master object is not defined!")
             return False
+        if not isinstance(parameter, str) or not parameter or len(parameter) > 16:
+            self.logger.error("Invalid parameter name '%s': must be 1 to 16 characters", parameter)
+            return False
+        if math.isnan(value) or math.isinf(value):
+            self.logger.error("Invalid parameter value for %s: %s", parameter, value)
+            return False
 
         if target_system is None:
             target_system = self.master.target_system
+
+        param_key = (target_system, mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1)
+        pstate = self.master.param_state.get(param_key)
+        if pstate is not None:
+            pstate.params.pop(parameter, None)
+
+        start_time = time.time()
+        last_send_time = start_time
         self.master.mav.param_set_send(
             target_system, # target_system
             mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1, # target_component
-            parameter.encode(), # param_id
-            value, # param_value
+            parameter.encode("ascii"), # param_id
+            float(value), # param_value
             param_type # param_type
         )
-        self.logger.info("Parameter request sent")
-        return True
+
+        if timeout_ack == 0:
+            self.logger.info("Parameter request sent (no confirmation wait)")
+            return True
+
+        retries = 0
+        while True:
+            if self.mission_ended:
+                self.logger.critical("Mission stopped: stop waiting for parameter %s confirmation", parameter)
+                return False
+
+            pstate = self.master.param_state.get(param_key)
+            if pstate is not None and parameter in pstate.params:
+                confirmed_val = float(pstate.params[parameter])
+                if math.isclose(confirmed_val, float(value), rel_tol=tolerance, abs_tol=tolerance):
+                    self.logger.info("Parameter %s set to %s", parameter, confirmed_val)
+                    return True
+                self.logger.error(
+                    "Parameter %s write refused (expected %s, got %s)",
+                    parameter, value, confirmed_val
+                )
+                return False
+
+            now = time.time()
+            if timeout_ack is not None and now - start_time >= timeout_ack:
+                self.logger.critical("Setting parameter %s timed out", parameter)
+                return False
+
+            if now - last_send_time >= retry_timeout:
+                retries += 1
+                if retries > max_retries:
+                    self.logger.critical(
+                        "Setting parameter %s failed: max retries (%s) exceeded",
+                        parameter, max_retries
+                    )
+                    return False
+
+                self.logger.warning(
+                    "No PARAM_VALUE confirmation for %s: retrying PARAM_SET (attempt %s/%s)..",
+                    parameter, retries, max_retries
+                )
+                last_send_time = time.time()
+                self.master.mav.param_set_send(
+                    target_system,
+                    mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1,
+                    parameter.encode("ascii"),
+                    float(value),
+                    param_type
+                )
+
+            time.sleep(0.02)
 
     def send_waypoint(self,
             waypoint_index: int,
