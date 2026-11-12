@@ -136,7 +136,7 @@ def setup_logger(
         add_timestamp_to_console (bool): Add time to console logs.
         add_timestamp_to_file (bool): Add time to log file entries.
     """
-    if logger.hasHandlers():  # logger already configured
+    if logger.handlers:  # logger already configured
         return  # Skip configuration
         
     if debug_mode:

@@ -185,7 +185,6 @@ def test_mavlogger_and_setup_logger(tmp_path):
     log_path = tmp_path / "unit_test.log"
     custom_logger = logging.getLogger("unit_test_logger_instance")
     custom_logger.handlers.clear()
-    custom_logger.propagate = False
     setup_logger(
         logger=custom_logger,
         log_file=str(log_path),
