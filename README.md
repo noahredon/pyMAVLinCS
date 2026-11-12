@@ -3,6 +3,7 @@
 
 <p align="center">
   <img alt="License_new" src="https://img.shields.io/badge/License-MPL%202.0-brightgreen">
+  <a href="https://noahredon.github.io/pyMAVLinCS-documentation/"><img alt="Docs" src="https://img.shields.io/badge/docs-online-blue?logo=sphinx"></a>
   <a href="https://github.com/noahredon/pyMAVLinCS/actions/workflows/test.yml"><img alt="Tests" src="https://img.shields.io/github/actions/workflow/status/noahredon/pyMAVLinCS/test.yml?branch=main&label=tests&logo=github"></a>
   <img alt="GitHub" src="https://img.shields.io/badge/github-noahredon-blue?logo=github">
   <img alt="Python" src="https://img.shields.io/badge/Python-%3E%3D3.10-blue?logo=python">
@@ -24,6 +25,8 @@
 
 ## ✨ Overview
 
+> 🌐 **Full Online Documentation:** [https://noahredon.github.io/pyMAVLinCS-documentation/](https://noahredon.github.io/pyMAVLinCS-documentation/)
+
 pyMAVLinCS is a powerful, professional-grade Python library designed to simplify the development of autonomous systems by providing a high-level, stable, and feature-rich interface for MAVLink-based flight controllers (like ArduPilot and PX4).
 
 > ⚠️ **The Problem:** Developing complex drone missions or ground control stations (GCS) often requires deep, low-level integration with the MAVLink protocol. This involves handling command acknowledgments, managing asynchronous message streams (like `STATUSTEXT` or `TIMESYNC`), performing complex geographic calculations, and ensuring thread safety, leading to verbose and error-prone code.
@@ -44,7 +47,7 @@ Gain instant access to crucial flight and system data using simple method calls 
 - 🛰️ **Global & Local Position:** Retrieve current GPS coordinates (`position_gps`: latitude, longitude, relative altitude, MSL altitude) and local NED coordinates (`position_local`).
 - 🧭 **Attitude and Velocity:** Get precise attitude Euler angles (`angles`) and angular rates (`angular_rates`). Retrieve linear velocities in three dimensions (`speed`) and absolute speed norm (`speed_module`).
 - ⚡ **Power Monitoring:** Check remaining battery percentage (`battery_percentage`) and current voltage in Volts (`battery_voltage`).
-- ⚙️ **Flight Status:** Instantly check arming status (`motors_armed`, `motors_disarmed`), autopilot type (`autopilot_int`, `autopilot_str`), current flight mode (`mode`, `custom_mode`), and PX4 mode details (`base_mode`, `custom_main_mode`, `custom_sub_mode`).
+- ⚙️ **Flight Status:** Instantly check arming status (`motors_armed`, `motors_disarmed`), autopilot type (`autopilot_int`, `autopilot_str`), vehicle type (`vehicle_type_int`, `vehicle_type_str`), current flight mode (`mode`, `custom_mode`), and PX4 mode details (`base_mode`, `custom_main_mode`, `custom_sub_mode`).
 - 🌐 **Fix Status:** Confirm the status of the GPS system, including 3D fix availability (`gps_3d_fix`).
 - 🕒 **Timing Data:** Access system boot time in seconds (`time_boot`) and milliseconds (`time_boot_ms`), and Unix timestamp in microseconds (`time_usec`).
 
@@ -55,6 +58,7 @@ Execute mission-critical commands with built-in acknowledgment handling to ensur
 - 🚁 **Takeoff & Landing:** Initiate automated takeoff (`takeoff`) to a specified altitude (including in-air vertical repositioning) or perform an automated landing (`land`).
 - 🔄 **Flight Mode Control:** Change the flight mode using human-readable mode names, ArduPilot mode IDs, or PX4 mode tuples (`set_mode`).
 - 🗺️ **Targeted Movement:** Set precise GPS position targets (`set_gps_pos_target`) or local NED position targets (`set_local_pos_target`) with optional yaw control.
+- ✈️ **Reposition** Commands the vehicle to reposition to a specific GPS location (`do_reposition`) with optional arguments. Can be used for fixed-wings in Guided/Hold mode.
 - 💨 **Velocity Control:** Directly command the drone's velocity components (`set_speed`: North, East, Down in m/s) and heading.
 - 🏠 **Return to Launch (RTL):** Send a Return-To-Launch request (`return_to_launch`) for safe mission abort.
 - 🎯 **Dynamic Vehicle Following:** Autonomously take off and follow another moving MAVLink vehicle in real time (`do_follow`, `do_follow_with_takeoff`).
