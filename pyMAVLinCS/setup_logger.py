@@ -172,5 +172,5 @@ def setup_logger(
         logger.addHandler(file_handler)
 
 
-default_logger = logging.getLogger(__file__)
+default_logger = logging.getLogger(__name__)
 setup_logger(logger=default_logger)
