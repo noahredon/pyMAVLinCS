@@ -483,6 +483,7 @@ def test_safety_guards_and_invalid_inputs(drone):
     assert drone.set_gimbal_target(math.nan, 2.0, 10.0) is False
     assert drone.change_speed(math.nan) is False
     assert drone.change_speed(5.0, speed_type=99) is False
+    assert drone.change_speed(speed=-1.0, throttle=50.0) is False
 
     # Invalid flight mode names and tuples
     assert drone.set_mode("UNKNOWN_MODE_XYZ") is False

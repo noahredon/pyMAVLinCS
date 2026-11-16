@@ -2249,12 +2249,33 @@ class MAVLinCS:
             self.logger.error("speed=-2.0 (restore default) is only supported with SPEED_TYPE_AIRSPEED")
             return False
 
+        if target_system is None:
+            target_system = self.master.target_system
+
+        is_on_ardupilot = bool(self.autopilot_int(source_system=target_system) == mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA)
+        is_copter = bool(self.vehicle_type_int(source_system=target_system) in [
+            mavutil.mavlink.MAV_TYPE_QUADROTOR,
+            mavutil.mavlink.MAV_TYPE_HEXAROTOR,
+            mavutil.mavlink.MAV_TYPE_OCTOROTOR,
+            mavutil.mavlink.MAV_TYPE_TRICOPTER,
+            mavutil.mavlink.MAV_TYPE_HELICOPTER,
+            mavutil.mavlink.MAV_TYPE_COAXIAL,
+            mavutil.mavlink.MAV_TYPE_DECAROTOR,
+            mavutil.mavlink.MAV_TYPE_DODECAROTOR,
+            mavutil.mavlink.MAV_TYPE_GENERIC_MULTIROTOR,
+        ])
+
+        if is_on_ardupilot and is_copter:
+            if throttle != -1.0:
+                self.logger.warning("Throttle parameter (param3) is ignored on ArduCopter")
+                throttle = -1.0
+            if speed <= 0:
+                self.logger.error("On ArduCopter, target speed must be strictly positive (got %s)", speed)
+                return False
+
         # On ArduPlane, SPEED_TYPE_GROUNDSPEED does not ignore speed=-1.0 before checking throttle;
         # using SPEED_TYPE_AIRSPEED when speed==-1.0 ensures only throttle_cruise is updated.
         effective_speed_type = mavutil.mavlink.SPEED_TYPE_AIRSPEED if speed == -1.0 else speed_type
-
-        if target_system is None:
-            target_system = self.master.target_system
 
         self.master.mav.command_long_send(
             target_system, # target_system
