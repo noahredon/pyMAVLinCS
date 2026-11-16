@@ -1,13 +1,15 @@
 """
-Example 10: ArduPlane Fixed-Wing Modes (TAKEOFF, LOITER, FBWA, GUIDED, RTL) & Parameters.
+Example 10: ArduPlane Fixed-Wing Modes (TAKEOFF, LOITER, GUIDED via do_reposition, RTL) & Parameters.
 
 Demonstrates how to operate a fixed-wing aircraft (ArduPlane) without a pre-loaded
 waypoint mission:
-  1. Inspecting fixed-wing flight modes via mode_mapping().
+  1. Inspecting vehicle type (vehicle_type_str / vehicle_type_int) and fixed-wing
+     flight modes via mode_mapping().
   2. Reading and configuring ArduPlane parameters (WP_LOITER_RAD).
   3. Performing an automatic climb-out using ArduPlane's built-in TAKEOFF mode.
-  4. Switching between LOITER, FBWA, and GUIDED modes in flight, commanding a new
-     target altitude in GUIDED mode via set_gps_pos_target(), and returning home (RTL).
+  4. Switching to LOITER, then commanding a 3D GPS reposition in flight using
+     do_reposition() (with force_guided=True, custom loiter_radius, and ccw=True),
+     and finally returning home via return_to_launch() (RTL).
 """
 
 import math
@@ -26,7 +28,8 @@ def main():
                 print("Failed to acquire 3D GPS fix.")
                 return
 
-            # 1. Inspect available ArduPlane modes
+            # 1. Inspect vehicle type and available ArduPlane modes
+            print(f"Vehicle Type : {plane.vehicle_type_str()} (ID: {plane.vehicle_type_int()})")
             modes = plane.mode_mapping()
             if modes:
                 print(f"ArduPlane modes ({len(modes)}): {list(modes.keys())}")
@@ -61,17 +64,31 @@ def main():
             plane.set_mode("LOITER", timeout_ack=3, timeout_set_mode=4)
             time.sleep(5.0)
 
-            # 5. Switch to GUIDED mode and command a climb to 75m relative altitude
-            print("Switching to GUIDED mode and commanding target altitude = 75m...")
-            if plane.set_mode("GUIDED", timeout_ack=3, timeout_set_mode=4):
-                cur_pos = plane.position_gps()
-                plane.set_gps_pos_target(
-                    latitude=cur_pos.lat,
-                    longitude=cur_pos.lon,
-                    relative_altitude=75.0,
+            # 5. Reposition 250m North, 200m East at 70m relative altitude using do_reposition()
+            cur_pos = plane.position_gps()
+            target_pt = MAVLinCS.cartesian_to_geographic_point(
+                lat_origine=cur_pos.lat,
+                lon_origine=cur_pos.lon,
+                north_displacement=250.0,
+                east_displacement=200.0,
+            )
+            print("Repositioning to new 3D GPS loiter point via do_reposition(force_guided=True)...")
+            if plane.do_reposition(
+                latitude=target_pt.latitude,
+                longitude=target_pt.longitude,
+                altitude=70.0,
+                loiter_radius=65.0,
+                ccw=True,
+                force_guided=True,
+                timeout_ack=3,
+            ):
+                plane.wait_proximity_with_gps_pos(
+                    lat=target_pt.latitude,
+                    lon=target_pt.longitude,
+                    radius_acceptance=90.0,
+                    timeout=60,
                 )
-                time.sleep(8.0)
-                print(f"Current altitude in GUIDED: {plane.position_gps().relative_alt:.1f}m")
+                print(f"Reached target loiter circle! Alt: {plane.position_gps().relative_alt:.1f}m")
 
             # 6. Return To Launch (RTL) — ArduPlane flies back and loiters above HOME
             print("\nTriggering Return-To-Launch (RTL)...")

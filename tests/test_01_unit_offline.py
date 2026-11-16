@@ -227,6 +227,8 @@ def test_offline_open_close_and_thread_lifecycle(tmp_path):
     assert mav.mode() == "UNKNOWN"
     assert mav.autopilot_str() == "UNKNOWN"
     assert math.isnan(mav.autopilot_int())
+    assert mav.vehicle_type_str() == "UNKNOWN"
+    assert math.isnan(mav.vehicle_type_int())
     assert math.isnan(mav.custom_mode())
     assert math.isnan(mav.base_mode())
     assert math.isnan(mav.custom_main_mode())
@@ -504,6 +506,7 @@ def test_safety_guards_and_invalid_inputs(drone):
     assert drone.return_to_launch() is False
     assert drone.set_mode("GUIDED") is False
     assert drone.set_gps_pos_target(0.0, 0.0, 10.0) is False
+    assert drone.do_reposition(0.0, 0.0, 10.0) is False
     assert drone.set_local_pos_target(0.0, 0.0, -10.0) is False
     assert drone.set_speed(1.0, 0.0, 0.0) is False
     assert drone.set_servo(9, 1500) is False

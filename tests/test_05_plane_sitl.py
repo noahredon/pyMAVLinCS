@@ -94,9 +94,8 @@ def plane_drone(plane_sitl, tmp_path_factory):
 
 def test_plane_telemetry_and_modes(plane_drone):
     """Verifies ArduPlane vehicle type, fixed-wing mode mapping, and mode transitions."""
-    hb = plane_drone.get_msg("HEARTBEAT", max_age=5.0)
-    assert hb is not None
-    assert hb.type == mavutil.mavlink.MAV_TYPE_FIXED_WING
+    assert plane_drone.vehicle_type_int() == mavutil.mavlink.MAV_TYPE_FIXED_WING
+    assert plane_drone.vehicle_type_str() == "MAV_TYPE_FIXED_WING"
 
     mapping = plane_drone.mode_mapping()
     assert isinstance(mapping, dict)
@@ -110,7 +109,7 @@ def test_plane_telemetry_and_modes(plane_drone):
 
 
 def test_plane_auto_takeoff_mission_and_guided_flight(plane_drone):
-    """Uploads and executes a Fixed-Wing AUTO mission (runway takeoff -> waypoint) then tests GUIDED & RTL."""
+    """Uploads and executes a Fixed-Wing AUTO mission (runway takeoff -> waypoint) then tests do_reposition & RTL."""
     gps0 = plane_drone.position_gps()
     assert not math.isnan(gps0.lat) and not math.isnan(gps0.lon)
 
@@ -152,13 +151,22 @@ def test_plane_auto_takeoff_mission_and_guided_flight(plane_drone):
         timeout=60,
     ) is True
 
-    # Switch to GUIDED mode in flight and command a new target altitude via set_gps_pos_target
-    assert plane_drone.set_mode("GUIDED", timeout_ack=3, timeout_set_mode=4) is True
-    cur_gps = plane_drone.position_gps()
-    assert plane_drone.set_gps_pos_target(
-        latitude=cur_gps.lat,
-        longitude=cur_gps.lon,
-        relative_altitude=65.0,
+    # Reposition in flight to wp2 using do_reposition (with force_guided=True, loiter_radius=65m, ccw=True)
+    assert plane_drone.do_reposition(
+        latitude=wp2.latitude,
+        longitude=wp2.longitude,
+        altitude=60.0,
+        loiter_radius=65.0,
+        ccw=True,
+        force_guided=True,
+        timeout_ack=3,
+    ) is True
+    assert plane_drone.wait_mode_changed("GUIDED", timeout=5) is True
+    assert plane_drone.wait_proximity_with_gps_pos(
+        lat=wp2.latitude,
+        lon=wp2.longitude,
+        radius_acceptance=95.0,
+        timeout=60,
     ) is True
 
     # Trigger Return-To-Launch (RTL) and verify mode change

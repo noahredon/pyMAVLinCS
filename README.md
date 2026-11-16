@@ -57,7 +57,7 @@ Execute mission-critical commands with built-in acknowledgment handling to ensur
 - 🔑 **System State Management:** Safely arm (`arm`) or disarm (`disarm`) the drone, with automatic pre-arm mode checks on ArduPilot, optional forced execution, and configurable timeouts.
 - 🚁 **Takeoff & Landing:** Initiate automated takeoff (`takeoff`) to a specified altitude (including in-air vertical repositioning) or perform an automated landing (`land`).
 - 🔄 **Flight Mode Control:** Change the flight mode using human-readable mode names, ArduPilot mode IDs, or PX4 mode tuples (`set_mode`).
-- 🗺️ **Targeted Movement:** Set precise GPS position targets (`set_gps_pos_target`) or local NED position targets (`set_local_pos_target`) with optional yaw control.
+- 🗺️ **Targeted Movement:** Set precise GPS position targets (`set_gps_pos_target`), command 3D GPS repositioning across both multirotors and fixed-wing aircraft (`do_reposition`), or set local NED position targets (`set_local_pos_target`) with optional yaw control.
 - ✈️ **Reposition** Commands the vehicle to reposition to a specific GPS location (`do_reposition`) with optional arguments. Can be used for fixed-wings in Guided/Hold mode.
 - 💨 **Velocity Control:** Directly command the drone's velocity components (`set_speed`: North, East, Down in m/s) and heading.
 - 🏠 **Return to Launch (RTL):** Send a Return-To-Launch request (`return_to_launch`) for safe mission abort.

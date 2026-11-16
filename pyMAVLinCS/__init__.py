@@ -571,7 +571,7 @@ class MAVLinCS:
             str: Vehicle type (e.g.: 'MAV_TYPE_FIXED_WING', 'MAV_TYPE_QUADROTOR').
 
         Note:
-            Returns 'UNKNOW' if no valid data has been received.
+            Returns 'UNKNOWN' if no valid data has been received.
         """
         m = self.get_msg(
             msg_type="HEARTBEAT",
@@ -579,9 +579,9 @@ class MAVLinCS:
         )
         if m:
             if m.type not in mavutil.mavlink.enums["MAV_TYPE"]:
-                return f"UNKNOW: {m.type}"
+                return f"UNKNOWN: {m.type}"
             return mavutil.mavlink.enums["MAV_TYPE"][m.type].name
-        return "UNKNOW"
+        return "UNKNOWN"
 
     def battery_percentage(self, source_system: int|None = None) -> int|float:
         """Remaining battery (requires proper configuration of the flight controller).
@@ -2083,8 +2083,11 @@ class MAVLinCS:
                 mavutil.mavlink.MAV_TYPE_VTOL_DUOROTOR,
                 mavutil.mavlink.MAV_TYPE_VTOL_QUADROTOR,
                 mavutil.mavlink.MAV_TYPE_VTOL_TILTROTOR,
-                mavutil.mavlink.MAV_TYPE_VTOL_TAILSITTER,
-                mavutil.mavlink.MAV_TYPE_VTOL_FIXEDROTOR
+                getattr(mavutil.mavlink, "MAV_TYPE_VTOL_TAILSITTER", mavutil.mavlink.MAV_TYPE_VTOL_RESERVED2),
+                getattr(mavutil.mavlink, "MAV_TYPE_VTOL_FIXEDROTOR", mavutil.mavlink.MAV_TYPE_VTOL_RESERVED3),
+                mavutil.mavlink.MAV_TYPE_VTOL_RESERVED4,
+                mavutil.mavlink.MAV_TYPE_VTOL_RESERVED5,
+                mavutil.mavlink.MAV_TYPE_VTOL_GYRODYNE
             ])
 
             # ArduCopter requires already being in GUIDED mode before accepting DO_REPOSITION
