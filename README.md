@@ -143,7 +143,9 @@ The project structure separates the core MAVLink interface, supporting utility c
 │   ├── 📄 05_modes_parameters_and_low_level.py # Modes, parameters, raw messages, and connection lifecycle
 │   ├── 📄 06_gimbal_servo_and_precision_landing.py # Gimbal stabilization, servos, and LANDING_TARGET
 │   ├── 📄 07_home_ekf_and_geometry_utils.py    # HOME/EKF origin management and geodesic utilities
-│   └── 📄 08_vehicle_following.py              # Autonomous multi-vehicle following (FOLLOW mode)
+│   ├── 📄 08_vehicle_following.py              # Autonomous multi-vehicle following (FOLLOW mode)
+│   ├── 📄 09_arduplane_auto_mission_and_landing.py # ArduPlane AUTO mission (takeoff, circuit, runway land)
+│   └── 📄 10_arduplane_takeoff_guided_and_modes.py # ArduPlane TAKEOFF mode, LOITER, GUIDED altitude, and RTL
 ├── 📂 tests/                                   # Automated test suite (Unit & ArduPilot SITL)
 │   ├── 📄 conftest.py                          # Pytest configuration and automated SITL fixtures
 │   ├── 📄 test_01_unit_offline.py              # Offline geometry, math, MCC, and safety guard tests
