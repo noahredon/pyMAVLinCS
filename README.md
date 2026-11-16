@@ -149,7 +149,8 @@ The project structure separates the core MAVLink interface, supporting utility c
 │   ├── 📄 test_01_unit_offline.py              # Offline geometry, math, MCC, and safety guard tests
 │   ├── 📄 test_02_telemetry_comms.py           # Telemetry getters, HOME, TIMESYNC, callbacks, and params
 │   ├── 📄 test_03_flight_guided.py             # Full GUIDED flight test (takeoff, NED, GPS, speed, servo)
-│   └── 📄 test_04_missions_auto.py             # In-air and ground-start AUTO waypoint mission tests
+│   ├── 📄 test_04_missions_auto.py             # In-air and ground-start AUTO waypoint mission tests
+│   └── 📄 test_05_plane_sitl.py                # Fixed-wing (ArduPlane) modes, takeoff, and mission tests
 ├── 📂 .github/                                 # GitHub configuration
 │   └── 📂 workflows/                           # Continuous Integration & Delivery workflows
 │       ├── 📄 test.yml                         # CI workflow (pytest against ArduPilot SITL master)

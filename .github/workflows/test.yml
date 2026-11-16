@@ -43,21 +43,21 @@ jobs:
           git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/ArduPilot/ardupilot.git tests/ardupilot
           echo "sha=$(git -C tests/ardupilot rev-parse HEAD)" >> $GITHUB_OUTPUT
 
-      - name: Restore ArduCopter SITL build cache
+      - name: Restore ArduPilot SITL build cache
         id: cache-sitl
         uses: actions/cache@v4
         with:
           path: tests/ardupilot/build
-          key: sitl-arducopter-master-${{ runner.os }}-${{ steps.clone-ardupilot.outputs.sha }}
+          key: sitl-ardupilot-master-${{ runner.os }}-${{ steps.clone-ardupilot.outputs.sha }}
           restore-keys: |
-            sitl-arducopter-master-${{ runner.os }}-
+            sitl-ardupilot-master-${{ runner.os }}-
 
-      - name: Build ArduPilot SITL
+      - name: Build ArduPilot SITL (Copter & Plane)
         if: steps.cache-sitl.outputs.cache-hit != 'true'
         run: |
           cd tests/ardupilot
           ./waf configure --board sitl
-          ./waf copter
+          ./waf copter plane
 
       - name: Clean old ArduPilot caches
         # Only runs on main/dev pushes (not on external PRs where cache deletion is restricted)
@@ -65,7 +65,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          for cache_id in $(gh cache list --limit 100 --json id,key --jq '.[] | select(.key | startswith("sitl-arducopter-master-")) | .id'); do
+          for cache_id in $(gh cache list --limit 100 --json id,key --jq '.[] | select(.key | startswith("sitl-ardu")) | .id'); do
             gh cache delete "$cache_id" || true
           done
 
