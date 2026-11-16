@@ -45,7 +45,7 @@ pyMAVLinCS provides comprehensive capabilities spanning control, data retrieval,
 
 Gain instant access to crucial flight and system data using simple method calls that handle message retrieval and parsing automatically:
 - 🛰️ **Global & Local Position:** Retrieve current GPS coordinates (`position_gps`: latitude, longitude, relative altitude, MSL altitude) and local NED coordinates (`position_local`).
-- 🧭 **Attitude and Velocity:** Get precise attitude Euler angles (`angles`) and angular rates (`angular_rates`). Retrieve linear velocities in three dimensions (`speed`) and absolute speed norm (`speed_module`).
+- 🧭 **Attitude, Velocity & Aeronautical HUD:** Get precise attitude Euler angles (`angles`) and angular rates (`angular_rates`). Retrieve 3D NED velocities (`speed`), speed norm (`speed_module`), full aeronautical HUD telemetry (`vfr_hud`, `airspeed`, `groundspeed`, `heading`, `throttle`, `climb_rate`), and EKF wind estimation (`wind`).
 - ⚡ **Power Monitoring:** Check remaining battery percentage (`battery_percentage`) and current voltage in Volts (`battery_voltage`).
 - ⚙️ **Flight Status:** Instantly check arming status (`motors_armed`, `motors_disarmed`), autopilot type (`autopilot_int`, `autopilot_str`), vehicle type (`vehicle_type_int`, `vehicle_type_str`), current flight mode (`mode`, `custom_mode`), and PX4 mode details (`base_mode`, `custom_main_mode`, `custom_sub_mode`).
 - 🌐 **Fix Status:** Confirm the status of the GPS system, including 3D fix availability (`gps_3d_fix`).

@@ -115,12 +115,14 @@ def main():
             while not plane.is_waypoint_mission_completed():
                 seq = plane.current_waypoint_seq()
                 pos = plane.position_gps()
-                spd = plane.speed_module()
+                hud = plane.vfr_hud()
+                wnd = plane.wind()
                 print(
-                    f"[AUTO] Waypoint #{seq} | "
-                    f"Alt: {pos.relative_alt:.1f}m | "
-                    f"Groundspeed: {spd:.1f}m/s | "
-                    f"Mode: {plane.mode()}"
+                    f"[AUTO] WP #{seq} | "
+                    f"Alt: {pos.relative_alt:.1f}m (Climb: {hud.climb:+.1f}m/s) | "
+                    f"Airspeed: {hud.airspeed:.1f}m/s (GS: {hud.groundspeed:.1f}m/s) | "
+                    f"Hdg: {hud.heading}° | Thr: {hud.throttle}% | "
+                    f"Wind: {wnd.speed:.1f}m/s @ {wnd.direction:.0f}°"
                 )
                 time.sleep(2.0)
 

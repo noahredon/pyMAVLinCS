@@ -54,6 +54,17 @@ def test_telemetry_getters(drone):
     assert not math.isnan(spd.vx) and not math.isnan(spd.vy) and not math.isnan(spd.vz)
     assert not math.isnan(drone.speed_module())
 
+    hud = drone.vfr_hud()
+    assert not math.isnan(hud.airspeed) and not math.isnan(hud.groundspeed)
+    assert not math.isnan(drone.airspeed())
+    assert not math.isnan(drone.groundspeed())
+    assert 0 <= drone.heading() <= 360
+    assert 0 <= drone.throttle() <= 100
+    assert not math.isnan(drone.climb_rate())
+
+    wnd = drone.wind()
+    assert hasattr(wnd, "direction") and hasattr(wnd, "speed") and hasattr(wnd, "speed_z")
+
     assert drone.battery_voltage() > 0.0
     assert not math.isnan(drone.battery_percentage())
 

@@ -55,7 +55,14 @@ def main():
             start_t = time.time()
             while time.time() - start_t < 60:
                 pos = plane.position_gps()
-                print(f"  Alt: {pos.relative_alt:.1f}m | Speed: {plane.speed_module():.1f}m/s")
+                print(
+                    f"  Alt: {pos.relative_alt:.1f}m | "
+                    f"Airspeed: {plane.airspeed():.1f}m/s | "
+                    f"Groundspeed: {plane.groundspeed():.1f}m/s | "
+                    f"Climb: {plane.climb_rate():+.1f}m/s | "
+                    f"Hdg: {plane.heading()}° | "
+                    f"Thr: {plane.throttle()}%"
+                )
                 if pos.relative_alt >= 40.0:
                     break
                 time.sleep(1.5)

@@ -339,6 +339,177 @@ class MAVLinCS:
             return math.nan
         return math.sqrt(vx**2+vy**2+vz**2)
 
+    def vfr_hud(self, source_system: int|None = None) -> mavtypes.VfrHud:
+        """Aeronautical HUD metrics (VFR_HUD).
+
+        Args:
+            source_system (int|None): MAVLink system ID of the device. Defaults to the master's ID.
+
+        Returns:
+            mavtypes.VfrHud:
+                - airspeed (float): Current airspeed in m/s.
+                - groundspeed (float): Current horizontal ground speed in m/s.
+                - heading (int|float): Current compass heading in degrees (0-360, 0=North).
+                - throttle (int|float): Current throttle setting in percent (0-100).
+                - alt (float): Current altitude (MSL) in meters.
+                - climb (float): Current climb rate in m/s.
+
+        Note:
+            All returned values are NaN if no VFR_HUD message has been received.
+        """
+        m = self.get_msg(
+            msg_type="VFR_HUD",
+            source_system=source_system
+        )
+        if m:
+            return mavtypes.VfrHud(
+                airspeed=float(m.airspeed),
+                groundspeed=float(m.groundspeed),
+                heading=int(m.heading),
+                throttle=int(m.throttle),
+                alt=float(m.alt),
+                climb=float(m.climb)
+            )
+        return mavtypes.VfrHud(
+            airspeed=math.nan,
+            groundspeed=math.nan,
+            heading=math.nan,
+            throttle=math.nan,
+            alt=math.nan,
+            climb=math.nan
+        )
+
+    def airspeed(self, source_system: int|None = None) -> float:
+        """Current airspeed (calibrated/indicated airspeed on fixed-wing aircraft).
+
+        Args:
+            source_system (int|None): MAVLink system ID of the device. Defaults to the master's ID.
+
+        Returns:
+            float: Airspeed in m/s.
+
+        Note:
+            Returns NaN if no VFR_HUD data has been received.
+        """
+        m = self.get_msg(
+            msg_type="VFR_HUD",
+            source_system=source_system
+        )
+        if m:
+            return float(m.airspeed)
+        return math.nan
+
+    def groundspeed(self, source_system: int|None = None) -> float:
+        """Current horizontal ground speed from VFR_HUD.
+
+        Args:
+            source_system (int|None): MAVLink system ID of the device. Defaults to the master's ID.
+
+        Returns:
+            float: Ground speed in m/s.
+
+        Note:
+            Returns NaN if no VFR_HUD data has been received.
+        """
+        m = self.get_msg(
+            msg_type="VFR_HUD",
+            source_system=source_system
+        )
+        if m:
+            return float(m.groundspeed)
+        return math.nan
+
+    def heading(self, source_system: int|None = None) -> int|float:
+        """Current compass heading from VFR_HUD.
+
+        Args:
+            source_system (int|None): MAVLink system ID of the device. Defaults to the master's ID.
+
+        Returns:
+            int|float: Heading in degrees (0-360, 0=North).
+
+        Note:
+            Returns NaN if no VFR_HUD data has been received.
+        """
+        m = self.get_msg(
+            msg_type="VFR_HUD",
+            source_system=source_system
+        )
+        if m:
+            return int(m.heading)
+        return math.nan
+
+    def throttle(self, source_system: int|None = None) -> int|float:
+        """Current throttle percentage from VFR_HUD.
+
+        Args:
+            source_system (int|None): MAVLink system ID of the device. Defaults to the master's ID.
+
+        Returns:
+            int|float: Throttle in percent (0-100).
+
+        Note:
+            Returns NaN if no VFR_HUD data has been received.
+        """
+        m = self.get_msg(
+            msg_type="VFR_HUD",
+            source_system=source_system
+        )
+        if m:
+            return int(m.throttle)
+        return math.nan
+
+    def climb_rate(self, source_system: int|None = None) -> float:
+        """Current vertical climb rate (variometer) from VFR_HUD.
+
+        Args:
+            source_system (int|None): MAVLink system ID of the device. Defaults to the master's ID.
+
+        Returns:
+            float: Climb rate in m/s.
+
+        Note:
+            Returns NaN if no VFR_HUD data has been received.
+        """
+        m = self.get_msg(
+            msg_type="VFR_HUD",
+            source_system=source_system
+        )
+        if m:
+            return float(m.climb)
+        return math.nan
+
+    def wind(self, source_system: int|None = None) -> mavtypes.Wind:
+        """Wind estimation (ArduPilot WIND message).
+
+        Args:
+            source_system (int|None): MAVLink system ID of the device. Defaults to the master's ID.
+
+        Returns:
+            mavtypes.Wind:
+                - direction (float): Wind direction (that wind is coming from) in degrees.
+                - speed (float): Horizontal wind speed in ground plane in m/s.
+                - speed_z (float): Vertical wind speed in m/s.
+
+        Note:
+            All returned values are NaN if no WIND message has been received.
+        """
+        m = self.get_msg(
+            msg_type="WIND",
+            source_system=source_system
+        )
+        if m:
+            return mavtypes.Wind(
+                direction=float(m.direction),
+                speed=float(m.speed),
+                speed_z=float(m.speed_z)
+            )
+        return mavtypes.Wind(
+            direction=math.nan,
+            speed=math.nan,
+            speed_z=math.nan
+        )
+
     def motors_armed(self, source_system: int|None = None) -> bool|None:
         """Arming status.
 
@@ -4138,7 +4309,7 @@ class MAVLinCS:
             self.mavthread.start_thread()
 
             if timeout_heartbeat != 0 and pos_rate>0:
-                for msg_type, rate in [("GLOBAL_POSITION_INT", pos_rate), ("LOCAL_POSITION_NED", pos_rate), ("ATTITUDE", pos_rate), ("EXTENDED_SYS_STATE", 2)]:
+                for msg_type, rate in [("GLOBAL_POSITION_INT", pos_rate), ("LOCAL_POSITION_NED", pos_rate), ("ATTITUDE", pos_rate), ("VFR_HUD", pos_rate), ("EXTENDED_SYS_STATE", 2)]:
                     self.set_msg_rate(msg_type=msg_type, rate=rate)
 
             self.logger.info("Connection initialized")

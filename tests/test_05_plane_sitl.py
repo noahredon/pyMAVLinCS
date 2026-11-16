@@ -137,11 +137,21 @@ def test_plane_auto_takeoff_mission_and_guided_flight(plane_drone):
     start_climb = time.time()
     climbed = False
     while time.time() - start_climb < 45:
-        if plane_drone.position_gps().relative_alt >= 25.0 and plane_drone.speed_module() > 8.0:
+        if plane_drone.position_gps().relative_alt >= 25.0 and plane_drone.airspeed() > 10.0:
             climbed = True
             break
         time.sleep(0.5)
     assert climbed is True, f"ArduPlane did not climb as expected (alt={plane_drone.position_gps().relative_alt}m)"
+
+    # Verify aeronautical telemetry getters in flight (VFR_HUD & WIND)
+    hud = plane_drone.vfr_hud()
+    assert hud.airspeed > 8.0 and plane_drone.airspeed() > 8.0
+    assert hud.groundspeed > 8.0 and plane_drone.groundspeed() > 8.0
+    assert 0 <= plane_drone.heading() <= 360
+    assert 0 <= plane_drone.throttle() <= 100
+    assert not math.isnan(plane_drone.climb_rate())
+    wnd = plane_drone.wind()
+    assert not math.isnan(wnd.direction) and not math.isnan(wnd.speed)
 
     # Wait for ArduPlane to reach proximity of wp1 (fixed-wing acceptance radius ~90m)
     assert plane_drone.wait_proximity_with_gps_pos(

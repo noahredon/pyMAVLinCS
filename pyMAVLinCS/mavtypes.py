@@ -57,6 +57,28 @@ class Speed(NamedTuple):
     vz: float
     """Velocity in m/s downwards."""
 
+class VfrHud(NamedTuple):
+    airspeed: float
+    """Current airspeed in m/s."""
+    groundspeed: float
+    """Current horizontal ground speed in m/s."""
+    heading: int | float
+    """Current compass heading in degrees (0-360, 0=North)."""
+    throttle: int | float
+    """Current throttle setting in percent (0-100)."""
+    alt: float
+    """Current altitude (MSL) in meters."""
+    climb: float
+    """Current climb rate in m/s."""
+
+class Wind(NamedTuple):
+    direction: float
+    """Wind direction (that wind is coming from) in degrees."""
+    speed: float
+    """Horizontal wind speed in ground plane in m/s."""
+    speed_z: float
+    """Vertical wind speed in m/s."""
+
 class GimbalAngles(NamedTuple):
     roll: float
     """Roll in degrees."""

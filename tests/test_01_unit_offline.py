@@ -222,6 +222,13 @@ def test_offline_open_close_and_thread_lifecycle(tmp_path):
     assert math.isnan(mav.angular_rates().rollspeed)
     assert math.isnan(mav.speed().vx)
     assert math.isnan(mav.speed_module())
+    assert math.isnan(mav.vfr_hud().airspeed)
+    assert math.isnan(mav.airspeed())
+    assert math.isnan(mav.groundspeed())
+    assert math.isnan(mav.heading())
+    assert math.isnan(mav.throttle())
+    assert math.isnan(mav.climb_rate())
+    assert math.isnan(mav.wind().speed)
     assert mav.motors_armed() is None
     assert mav.motors_disarmed() is None
     assert mav.mode() == "UNKNOWN"
