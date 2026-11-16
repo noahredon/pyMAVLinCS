@@ -23,7 +23,8 @@ def test_guided_full_flight_sequence(drone):
     assert drone.takeoff(altitude=14.0, precision=1.0, timeout_takeoff=25) is True
     assert abs(drone.position_gps().relative_alt - 14.0) < 1.5
 
-    # 3. Movement in NED local coordinates (+12m North, +8m East, -14m Down)
+    # 3. Movement in NED local coordinates (+12m North, +8m East, -14m Down) with change_speed()
+    assert drone.change_speed(speed=6.0) is True
     loc_start = drone.position_local()
     tx, ty, tz = loc_start.x + 12.0, loc_start.y + 8.0, -14.0
     assert drone.set_local_pos_target(x=tx, y=ty, z=tz, yaw=math.radians(45)) is True

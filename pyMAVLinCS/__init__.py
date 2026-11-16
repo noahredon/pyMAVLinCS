@@ -2019,6 +2019,99 @@ class MAVLinCS:
         self.logger.debug("Speed set")
         return True
 
+    def change_speed(self,
+            speed: float = -1.0,
+            speed_type: int = mavutil.mavlink.SPEED_TYPE_GROUNDSPEED,
+            throttle: float = -1.0,
+            target_system: int|None = None,
+            **kwargs
+        ) -> bool:
+        """Changes the vehicle's target speed and/or throttle setpoint using MAV_CMD_DO_CHANGE_SPEED.
+
+        The value persists until it is overridden or there is a flight mode change.
+
+        Args:
+            speed (float): Target speed in m/s (-1.0 indicates no change, -2.0 on ArduPlane restores default airspeed).
+                - On ArduCopter: must be strictly positive (> 0).
+                - On ArduPlane (SPEED_TYPE_AIRSPEED): must be within [AIRSPEED_MIN, AIRSPEED_MAX], or -2.0.
+            speed_type (int): SPEED_TYPE | Type of speed controlled by `speed`:
+                - SPEED_TYPE_AIRSPEED (0): Airspeed (treated as groundspeed on ArduCopter for GCS compatibility).
+                - SPEED_TYPE_GROUNDSPEED (1): Groundspeed (horizontal NE speed on ArduCopter, min groundspeed on ArduPlane).
+                - SPEED_TYPE_CLIMB_SPEED (2): Climb speed (ArduCopter only).
+                - SPEED_TYPE_DESCENT_SPEED (3): Descent speed (ArduCopter only).
+            throttle (float): Target throttle percentage in (0, 100] (-1.0 indicates no change). Used on ArduPlane when speed is not changed.
+            target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
+            **timeout_ack (float|None): ACK wait timeout in seconds. 0 means no wait (returns False). None means no timeout. Default: 2.
+
+        Returns:
+            bool: True if the command was accepted by the flight controller, False otherwise.
+
+        Note:
+            On ArduPlane, the vehicle must be in GUIDED or AUTO mode for this command to be accepted.
+        """
+        self.logger.debug("Sending DO_CHANGE_SPEED..")
+        timeout_ack = kwargs.get('timeout_ack', 2)
+        if self.mission_ended:
+            self.logger.critical("Mission stopped: Unable to change speed")
+            return False
+        if not self.allow_actions:
+            self.logger.error("Actions not allowed: Unable to change speed")
+            return False
+        if self.master is None:
+            self.logger.error("Master object is not defined!")
+            return False
+        if math.isnan(speed) or math.isinf(speed) or math.isnan(throttle) or math.isinf(throttle):
+            self.logger.error("Invalid NaN/Inf value for change_speed (speed=%s, throttle=%s)", speed, throttle)
+            return False
+        if speed_type not in (
+            mavutil.mavlink.SPEED_TYPE_AIRSPEED,
+            mavutil.mavlink.SPEED_TYPE_GROUNDSPEED,
+            mavutil.mavlink.SPEED_TYPE_CLIMB_SPEED,
+            mavutil.mavlink.SPEED_TYPE_DESCENT_SPEED,
+        ):
+            self.logger.error("Invalid speed_type: %s", speed_type)
+            return False
+        if speed <= 0 and speed not in (-1.0, -2.0):
+            self.logger.error("Invalid speed value %s: must be > 0 (or -1 for no change, -2 for default airspeed)", speed)
+            return False
+        if speed == -2.0 and speed_type != mavutil.mavlink.SPEED_TYPE_AIRSPEED:
+            self.logger.error("speed=-2.0 (restore default) is only supported with SPEED_TYPE_AIRSPEED")
+            return False
+
+        # On ArduPlane, SPEED_TYPE_GROUNDSPEED does not ignore speed=-1.0 before checking throttle;
+        # using SPEED_TYPE_AIRSPEED when speed==-1.0 ensures only throttle_cruise is updated.
+        effective_speed_type = mavutil.mavlink.SPEED_TYPE_AIRSPEED if speed == -1.0 else speed_type
+
+        if target_system is None:
+            target_system = self.master.target_system
+
+        self.master.mav.command_long_send(
+            target_system, # target_system
+            mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1, # target_component
+            mavutil.mavlink.MAV_CMD_DO_CHANGE_SPEED, # command
+            1, # confirmation
+            float(effective_speed_type), # param1 (Speed type)
+            float(speed), # param2 (Speed in m/s)
+            float(throttle), # param3 (Throttle %)
+            0,0,0,0 # param4-7 (Reserved)
+        )
+
+        accepted = self.wait_command_ack(
+            command=mavutil.mavlink.MAV_CMD_DO_CHANGE_SPEED,
+            source_system=target_system,
+            timeout=timeout_ack
+        )
+        if accepted:
+            self.logger.info("Speed change command accepted")
+        elif accepted is None: # Mission end or Timeout
+            if self.mission_ended:
+                self.logger.critical("End of mission")
+            else:
+                self.logger.critical("Speed change command timed out")
+        else: # Refused
+            self.logger.error("Speed change command failed or denied")
+        return bool(accepted)
+
     def do_reposition(self,
                 latitude: float = math.nan,
                 longitude: float = math.nan,

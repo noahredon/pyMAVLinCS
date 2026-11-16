@@ -59,7 +59,7 @@ Execute mission-critical commands with built-in acknowledgment handling to ensur
 - 🔄 **Flight Mode Control:** Change the flight mode using human-readable mode names, ArduPilot mode IDs, or PX4 mode tuples (`set_mode`).
 - 🗺️ **Targeted Movement:** Set precise GPS position targets (`set_gps_pos_target`), command 3D GPS repositioning across both multirotors and fixed-wing aircraft (`do_reposition`), or set local NED position targets (`set_local_pos_target`) with optional yaw control.
 - ✈️ **Reposition** Commands the vehicle to reposition to a specific GPS location (`do_reposition`) with optional arguments. Can be used for fixed-wings in Guided/Hold mode.
-- 💨 **Velocity Control:** Directly command the drone's velocity components (`set_speed`: North, East, Down in m/s) and heading.
+- 💨 **Velocity & Speed Control:** Directly command velocity components (`set_speed`: North, East, Down in m/s) and heading, or dynamically adjust target airspeed, groundspeed, climb/descent speed, and cruise throttle (`change_speed`).
 - 🏠 **Return to Launch (RTL):** Send a Return-To-Launch request (`return_to_launch`) for safe mission abort.
 - 🎯 **Dynamic Vehicle Following:** Autonomously take off and follow another moving MAVLink vehicle in real time (`do_follow`, `do_follow_with_takeoff`).
 - 🛬 **Precision Landing Target:** Stream visual/IR landing target offsets in the drone's body frame (`send_landing_target`).

@@ -14,6 +14,7 @@ waypoint mission:
 
 import math
 import time
+from pymavlink import mavutil
 from pyMAVLinCS import MAVLinCS
 
 
@@ -82,6 +83,12 @@ def main():
                 force_guided=True,
                 timeout_ack=3,
             ):
+                # Adjust target airspeed to 18 m/s while flying in GUIDED mode
+                plane.change_speed(
+                    speed=18.0,
+                    speed_type=mavutil.mavlink.SPEED_TYPE_AIRSPEED,
+                    timeout_ack=2,
+                )
                 plane.wait_proximity_with_gps_pos(
                     lat=target_pt.latitude,
                     lon=target_pt.longitude,
@@ -89,6 +96,12 @@ def main():
                     timeout=60,
                 )
                 print(f"Reached target loiter circle! Alt: {plane.position_gps().relative_alt:.1f}m")
+                # Restore default airspeed (-2.0)
+                plane.change_speed(
+                    speed=-2.0,
+                    speed_type=mavutil.mavlink.SPEED_TYPE_AIRSPEED,
+                    timeout_ack=2,
+                )
 
             # 6. Return To Launch (RTL) — ArduPlane flies back and loiters above HOME
             print("\nTriggering Return-To-Launch (RTL)...")

@@ -472,8 +472,10 @@ def test_safety_guards_and_invalid_inputs(drone):
     assert drone.set_servo(servo_channel=9, pwm=950) is False
     assert drone.set_servo(servo_channel=9, pwm=2050) is False
 
-    # NaN coordinates in set_gimbal_target
+    # NaN coordinates in set_gimbal_target and invalid inputs in change_speed
     assert drone.set_gimbal_target(math.nan, 2.0, 10.0) is False
+    assert drone.change_speed(math.nan) is False
+    assert drone.change_speed(5.0, speed_type=99) is False
 
     # Invalid flight mode names and tuples
     assert drone.set_mode("UNKNOWN_MODE_XYZ") is False
@@ -509,6 +511,7 @@ def test_safety_guards_and_invalid_inputs(drone):
     assert drone.do_reposition(0.0, 0.0, 10.0) is False
     assert drone.set_local_pos_target(0.0, 0.0, -10.0) is False
     assert drone.set_speed(1.0, 0.0, 0.0) is False
+    assert drone.change_speed(5.0) is False
     assert drone.set_servo(9, 1500) is False
     assert drone.set_gimbal_target(0.0, 0.0, 10.0) is False
     assert drone.set_gimbal_angles(-45.0, 0.0) is False

@@ -162,6 +162,24 @@ def test_plane_auto_takeoff_mission_and_guided_flight(plane_drone):
         timeout_ack=3,
     ) is True
     assert plane_drone.wait_mode_changed("GUIDED", timeout=5) is True
+
+    # Test change_speed on ArduPlane in GUIDED mode (airspeed, restore default airspeed, and cruise throttle)
+    assert plane_drone.change_speed(
+        speed=18.0,
+        speed_type=mavutil.mavlink.SPEED_TYPE_AIRSPEED,
+        timeout_ack=3,
+    ) is True
+    assert plane_drone.change_speed(
+        speed=-2.0,
+        speed_type=mavutil.mavlink.SPEED_TYPE_AIRSPEED,
+        timeout_ack=3,
+    ) is True
+    assert plane_drone.change_speed(
+        speed=-1.0,
+        throttle=65.0,
+        timeout_ack=3,
+    ) is True
+
     assert plane_drone.wait_proximity_with_gps_pos(
         lat=wp2.latitude,
         lon=wp2.longitude,
