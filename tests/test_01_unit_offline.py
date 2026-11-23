@@ -474,6 +474,71 @@ def test_get_and_write_parameter_offline():
         mav.close()
 
 
+def test_landing_and_return_path_commands_offline():
+    mav = MAVLinCS(
+        address="udpin:127.0.0.1:0",
+        timeout_heartbeat=0,
+        pos_rate=0,
+        mavlogfile=None,
+    )
+    try:
+        # Invalid altitude validation on do_go_around
+        assert mav.do_go_around(altitude=-5.0) is False
+        assert mav.do_go_around(altitude=math.nan) is False
+        assert mav.do_go_around(altitude=math.inf) is False
+
+        # Simulate autopilot COMMAND_ACK responses
+        ap_mav = mavutil.mavlink.MAVLink(None, srcSystem=1, srcComponent=1)
+        recorded_cmds = []
+
+        def push_ack(command: int, result: int):
+            ack = ap_mav.command_ack_encode(
+                command,
+                result,
+                0,
+                0,
+                mav.master.source_system,
+                mav.master.source_component,
+            )
+            ack.pack(ap_mav)
+            ack._timestamp = time.time()
+            with mav.mavthread._lock:
+                mav.mavthread._queue.append(ack)
+                mav.mavthread._msg_received.set()
+
+        def on_gcs_send(m):
+            if m.get_type() == "COMMAND_LONG":
+                recorded_cmds.append((m.command, m.param1))
+                if m.command == mavutil.mavlink.MAV_CMD_DO_RETURN_PATH_START:
+                    push_ack(m.command, mavutil.mavlink.MAV_RESULT_ACCEPTED)
+                elif m.command == mavutil.mavlink.MAV_CMD_DO_LAND_START:
+                    push_ack(m.command, mavutil.mavlink.MAV_RESULT_ACCEPTED)
+                elif m.command == mavutil.mavlink.MAV_CMD_DO_GO_AROUND:
+                    # Accept non-zero altitude, refuse zero altitude to test both branches
+                    res = (
+                        mavutil.mavlink.MAV_RESULT_ACCEPTED
+                        if m.param1 > 0
+                        else mavutil.mavlink.MAV_RESULT_FAILED
+                    )
+                    push_ack(m.command, res)
+
+        mav.set_additional_send_callback(on_gcs_send)
+
+        assert mav.do_return_path_start(timeout_ack=1.0) is True
+        assert mav.do_land_start(timeout_ack=1.0) is True
+        assert mav.do_go_around(altitude=50.0, timeout_ack=1.0) is True
+        assert mav.do_go_around(altitude=0.0, timeout_ack=1.0) is False
+
+        assert recorded_cmds == [
+            (mavutil.mavlink.MAV_CMD_DO_RETURN_PATH_START, 0.0),
+            (mavutil.mavlink.MAV_CMD_DO_LAND_START, 0.0),
+            (mavutil.mavlink.MAV_CMD_DO_GO_AROUND, 50.0),
+            (mavutil.mavlink.MAV_CMD_DO_GO_AROUND, 0.0),
+        ]
+    finally:
+        mav.close()
+
+
 def test_safety_guards_and_invalid_inputs(drone):
     # PWM out of bounds [1000, 2000]
     assert drone.set_servo(servo_channel=9, pwm=950) is False
@@ -514,6 +579,9 @@ def test_safety_guards_and_invalid_inputs(drone):
     assert drone.takeoff(10.0) is False
     assert drone.land() is False
     assert drone.return_to_launch() is False
+    assert drone.do_land_start() is False
+    assert drone.do_go_around() is False
+    assert drone.do_return_path_start() is False
     assert drone.set_mode("GUIDED") is False
     assert drone.set_gps_pos_target(0.0, 0.0, 10.0) is False
     assert drone.do_reposition(0.0, 0.0, 10.0) is False
@@ -544,6 +612,9 @@ def test_safety_guards_and_invalid_inputs(drone):
     assert drone.takeoff(10.0) is False
     assert drone.land() is False
     assert drone.return_to_launch() is False
+    assert drone.do_land_start() is False
+    assert drone.do_go_around() is False
+    assert drone.do_return_path_start() is False
     assert drone.do_follow(target_system=2) is None
     assert drone.do_follow_with_takeoff(target_system=2) is None
     assert drone.send_landing_target(0.0, 0.0, 1.0) is None

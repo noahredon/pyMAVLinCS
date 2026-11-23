@@ -2954,20 +2954,11 @@ class MAVLinCS:
         ) -> bool:
         """Uploads a complete waypoint mission using the MAVLink Mission Protocol handshake.
 
-        Sends MISSION_COUNT and responds sequentially to each MISSION_REQUEST_INT
-        (or MISSION_REQUEST) from the flight controller with MISSION_ITEM_INT,
-        retrying automatically on packet loss until MISSION_ACK is received.
-
         Args:
-            waypoints (list[mavtypes.MissionItem|dict|tuple]): Ordered list of mission items
-                (starting at sequence 0, which is reserved for HOME on ArduPilot).
-                Each element can be:
-                - a ``mavtypes.MissionItem`` instance,
-                - a ``dict`` with keys ``command``, ``x`` (or ``lat``/``latitude``),
-                  ``y`` (or ``lon``/``longitude``), ``z`` (or ``alt``/``altitude``/``relative_alt``),
-                  and optional ``frame``, ``param1``, ``param2``, ``param3``, ``param4``,
-                - a 4-tuple ``(command, x, y, z)``, 5-tuple ``(command, x, y, z, frame)``,
-                  or 9-tuple ``(command, x, y, z, frame, param1, param2, param3, param4)``.
+            waypoints (list[mavtypes.MissionItem|dict|tuple]): Ordered list of mission items (starting at sequence 0, which is reserved for HOME on ArduPilot). Each element can be:
+                - a mavtypes.MissionItem instance
+                - a dict with keys: command, x (or lat/latitude), y (or lon/longitude), z (or alt/altitude/relative_alt), and optional frame, param1, param2, param3, param4
+                - a 4-tuple (command, x, y, z), 5-tuple (command, x, y, z, frame), or 9-tuple (command, x, y, z, frame, param1, param2, param3, param4).
             clear_existing (bool): Whether to clear existing waypoints on the flight controller before uploading. Default: True.
             target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
             **timeout (float|None): Overall timeout in seconds for the upload handshake. 0 means no wait (returns False). None means no overall timeout. Default: 15.0.
@@ -3294,6 +3285,193 @@ class MAVLinCS:
                 self.logger.critical("RTL timed out")
         else: # Refused
             self.logger.error("RTL failed")
+        return bool(accepted)
+
+    def do_land_start(self,
+            target_system: int|None = None,
+            **kwargs
+        ) -> bool:
+        """Triggers an autonomous mission landing sequence using ``MAV_CMD_DO_LAND_START``.
+
+        Commands the flight controller to jump to the closest ``MAV_CMD_DO_LAND_START`` marker in the loaded mission and switch to AUTO mode to execute the landing pattern.
+
+        Args:
+            target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
+            **timeout_ack (float|None): ACK waiting timeout in seconds. 0 means no wait (returns False). None means no timeout. Default: 2.
+
+        Returns:
+            bool: True if the command was accepted by the flight controller, False otherwise.
+
+        Note:
+            - Supported on ArduPlane and ArduCopter (4.2+, switches to AUTO / AUTO_RTL).
+            - Fails (returns False) if no ``MAV_CMD_DO_LAND_START`` marker is present in the uploaded mission.
+            - If multiple ``MAV_CMD_DO_LAND_START`` markers exist in the mission, ArduPilot chooses the closest one
+              in 3D (latitude, longitude, altitude) to the vehicle's current location (or uses the
+              coordinates of the following waypoint if the marker's coordinates are 0).
+        """
+        self.logger.info("Starting mission landing sequence (DO_LAND_START)..")
+        timeout_ack = kwargs.get('timeout_ack', 2)
+        if self.mission_ended:
+            self.logger.critical("Mission stopped: Unable to start landing sequence")
+            return False
+        if not self.allow_actions:
+            self.logger.error("Actions not allowed: Unable to start landing sequence")
+            return False
+        if self.master is None:
+            self.logger.error("Master object is not defined!")
+            return False
+
+        if target_system is None:
+            target_system = self.master.target_system
+
+        self.master.mav.command_long_send(
+            target_system, # target_system
+            mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1, # target_component
+            mavutil.mavlink.MAV_CMD_DO_LAND_START, # command
+            1, # confirmation
+            0,0,0,0,0,0,0 # param1-7 (ignored)
+        )
+
+        accepted = self.wait_command_ack(
+            command=mavutil.mavlink.MAV_CMD_DO_LAND_START,
+            source_system=target_system,
+            timeout=timeout_ack
+        )
+        if accepted:
+            self.logger.info("Landing sequence started")
+        elif accepted is None: # Mission end or timeout
+            if self.mission_ended:
+                self.logger.critical("Mission ended")
+            else:
+                self.logger.critical("DO_LAND_START timed out")
+        else: # Refused
+            self.logger.error("DO_LAND_START failed or refused")
+        return bool(accepted)
+
+    def do_go_around(self,
+            altitude: float = 0.0,
+            target_system: int|None = None,
+            **kwargs
+        ) -> bool:
+        """Aborts an autonomous landing and initiates a go-around maneuver using ``MAV_CMD_DO_GO_AROUND``.
+
+        If the loaded mission contains a planned ``MAV_CMD_DO_GO_AROUND`` abort sequence, ArduPlane jumps to the closest one.
+        Otherwise it commands a pitch-up climb-out to the specified relative altitude (or default abort altitude if altitude==0 before repeating the landing approach.
+
+        Args:
+            altitude (float): Target climb-out altitude relative to HOME in meters. 0.0 uses the flight controller's default go-around/abort altitude. Default: 0.0.
+            target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
+            **timeout_ack (float|None): ACK waiting timeout in seconds. 0 means no wait (returns False). None means no timeout. Default: 2.
+
+        Returns:
+            bool: True if the go-around command was accepted by the flight controller, False otherwise.
+
+        Note:
+            - Supported on ArduPlane (fixed-wing and QuadPlane).
+            - On ArduPlane, the aircraft must be in AUTO mode and actively executing a
+              landing command (e.g., ``MAV_CMD_NAV_LAND`` or ``MAV_CMD_NAV_VTOL_LAND``) for
+              this command to be accepted.
+        """
+        self.logger.info("Triggering go-around (DO_GO_AROUND)..")
+        timeout_ack = kwargs.get('timeout_ack', 2)
+        if self.mission_ended:
+            self.logger.critical("Mission stopped: Unable to trigger go-around")
+            return False
+        if not self.allow_actions:
+            self.logger.error("Actions not allowed: Unable to trigger go-around")
+            return False
+        if self.master is None:
+            self.logger.error("Master object is not defined!")
+            return False
+        if math.isnan(altitude) or math.isinf(altitude) or altitude < 0:
+            self.logger.error("Invalid altitude for go-around: %s (must be >= 0)", altitude)
+            return False
+
+        if target_system is None:
+            target_system = self.master.target_system
+
+        self.master.mav.command_long_send(
+            target_system, # target_system
+            mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1, # target_component
+            mavutil.mavlink.MAV_CMD_DO_GO_AROUND, # command
+            1, # confirmation
+            float(altitude), # param1 (Climb-out altitude in meters, 0 = default)
+            0,0,0,0,0,0 # param2-7 (unused)
+        )
+
+        accepted = self.wait_command_ack(
+            command=mavutil.mavlink.MAV_CMD_DO_GO_AROUND,
+            source_system=target_system,
+            timeout=timeout_ack
+        )
+        if accepted:
+            self.logger.info("Go-around accepted")
+        elif accepted is None: # Mission end or timeout
+            if self.mission_ended:
+                self.logger.critical("Mission ended")
+            else:
+                self.logger.critical("DO_GO_AROUND timed out")
+        else: # Refused
+            self.logger.error("DO_GO_AROUND failed or refused")
+        return bool(accepted)
+
+    def do_return_path_start(self,
+            target_system: int|None = None,
+            **kwargs
+        ) -> bool:
+        """Joins the closest leg of a mission return-path segment using ``MAV_CMD_DO_RETURN_PATH_START``.
+
+        Commands the flight controller to find the closest waypoint/leg following a ``MAV_CMD_DO_RETURN_PATH_START`` marker (and preceding any landing sequence)
+        in the loaded mission, and switches to AUTO mode to follow that return corridor.
+
+        Args:
+            target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
+            **timeout_ack (float|None): ACK waiting timeout in seconds. 0 means no wait (returns False). None means no timeout. Default: 2.
+
+        Returns:
+            bool: True if the command was accepted by the flight controller, False otherwise.
+
+        Note:
+            - Supported on ArduPlane and ArduCopter.
+            - Fails (returns False) if no ``MAV_CMD_DO_RETURN_PATH_START`` segment with valid waypoints is present in the uploaded mission.
+        """
+        self.logger.info("Starting mission return path (DO_RETURN_PATH_START)..")
+        timeout_ack = kwargs.get('timeout_ack', 2)
+        if self.mission_ended:
+            self.logger.critical("Mission stopped: Unable to start return path")
+            return False
+        if not self.allow_actions:
+            self.logger.error("Actions not allowed: Unable to start return path")
+            return False
+        if self.master is None:
+            self.logger.error("Master object is not defined!")
+            return False
+
+        if target_system is None:
+            target_system = self.master.target_system
+
+        self.master.mav.command_long_send(
+            target_system, # target_system
+            mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1, # target_component
+            mavutil.mavlink.MAV_CMD_DO_RETURN_PATH_START, # command
+            1, # confirmation
+            0,0,0,0,0,0,0 # param1-7 (ignored)
+        )
+
+        accepted = self.wait_command_ack(
+            command=mavutil.mavlink.MAV_CMD_DO_RETURN_PATH_START,
+            source_system=target_system,
+            timeout=timeout_ack
+        )
+        if accepted:
+            self.logger.info("Return path started")
+        elif accepted is None: # Mission end or timeout
+            if self.mission_ended:
+                self.logger.critical("Mission ended")
+            else:
+                self.logger.critical("DO_RETURN_PATH_START timed out")
+        else: # Refused
+            self.logger.error("DO_RETURN_PATH_START failed or refused")
         return bool(accepted)
 
     def reboot(self,

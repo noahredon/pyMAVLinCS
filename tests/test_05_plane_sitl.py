@@ -109,21 +109,29 @@ def test_plane_telemetry_and_modes(plane_drone):
 
 
 def test_plane_auto_takeoff_mission_and_guided_flight(plane_drone):
-    """Uploads and executes a Fixed-Wing AUTO mission (runway takeoff -> waypoint) then tests do_reposition & RTL."""
+    """Uploads and executes a Fixed-Wing AUTO mission, then tests do_reposition, change_speed, do_return_path_start, do_land_start, do_go_around, and RTL."""
     gps0 = plane_drone.position_gps()
     assert not math.isnan(gps0.lat) and not math.isnan(gps0.lon)
 
-    # Project waypoints 250m North and 250m North + 200m East (appropriate for fixed-wing turn radius)
+    # Project waypoints (appropriate for fixed-wing turn radius)
     wp1 = MAVLinCS.cartesian_to_geographic_point(gps0.lat, gps0.lon, north_displacement=250.0, east_displacement=0.0)
     wp2 = MAVLinCS.cartesian_to_geographic_point(gps0.lat, gps0.lon, north_displacement=250.0, east_displacement=200.0)
+    wp_ret = MAVLinCS.cartesian_to_geographic_point(gps0.lat, gps0.lon, north_displacement=120.0, east_displacement=120.0)
 
-    # Seq 0: HOME, Seq 1: Fixed-Wing NAV_TAKEOFF (param1 = 15 deg pitch, z = 45m), Seq 2 & 3: Waypoints, Seq 4: RTL
+    # Seq 0: HOME
+    # Seq 1: Fixed-Wing NAV_TAKEOFF (param1 = 15 deg pitch, z = 45m)
+    # Seq 2 & 3: Outbound waypoints
+    # Seq 4: DO_RETURN_PATH_START marker + Seq 5: return corridor waypoint
+    # Seq 6: DO_LAND_START marker + Seq 7: NAV_LAND at HOME
     mission = [
         MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=gps0.lat, y=gps0.lon, z=0.0),
         MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, param1=15.0, x=gps0.lat, y=gps0.lon, z=45.0),
         MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=wp1.latitude, y=wp1.longitude, z=50.0),
         MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=wp2.latitude, y=wp2.longitude, z=50.0),
-        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH),
+        MissionItem(command=mavutil.mavlink.MAV_CMD_DO_RETURN_PATH_START),
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=wp_ret.latitude, y=wp_ret.longitude, z=45.0),
+        MissionItem(command=mavutil.mavlink.MAV_CMD_DO_LAND_START),
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_LAND, x=gps0.lat, y=gps0.lon, z=0.0),
     ]
 
     assert plane_drone.upload_mission(waypoints=mission, clear_existing=True, timeout=15.0) is True
@@ -196,6 +204,24 @@ def test_plane_auto_takeoff_mission_and_guided_flight(plane_drone):
         radius_acceptance=95.0,
         timeout=60,
     ) is True
+
+    # Test do_return_path_start: joins return-path leg (Seq 5) and switches back to AUTO mode
+    assert plane_drone.do_return_path_start(timeout_ack=3) is True
+    assert plane_drone.wait_mode_changed("AUTO", timeout=5) is True
+
+    # Test do_land_start: jumps directly to the landing sequence (Seq 6 -> Seq 7 NAV_LAND)
+    assert plane_drone.do_land_start(timeout_ack=3) is True
+    assert plane_drone.wait_mode_changed("AUTO", timeout=5) is True
+
+    # Wait until ArduPlane enters the active NAV_LAND item (Seq 7), then abort with do_go_around
+    start_land_wait = time.time()
+    while time.time() - start_land_wait < 10:
+        if plane_drone.current_waypoint_seq() == 7:
+            break
+        time.sleep(0.1)
+    assert plane_drone.current_waypoint_seq() == 7
+
+    assert plane_drone.do_go_around(altitude=55.0, timeout_ack=3) is True
 
     # Trigger Return-To-Launch (RTL) and verify mode change
     assert plane_drone.return_to_launch(timeout_ack=3) is True

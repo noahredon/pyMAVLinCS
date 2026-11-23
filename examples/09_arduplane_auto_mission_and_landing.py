@@ -1,19 +1,22 @@
 """
-Example 9: ArduPlane Autonomous Mission (Runway Takeoff, Waypoints, and Runway Landing).
+Example 9: ArduPlane Autonomous Mission (Takeoff, Return Path, Landing Sequence & Go-Around).
 
 Demonstrates how to build, upload, and execute a complete fixed-wing AUTO mission
-on ArduPlane using MissionItem, upload_mission(), and start_mission():
+on ArduPlane using MissionItem, upload_mission(), start_mission(),
+do_return_path_start(), do_land_start(), and do_go_around():
   - Seq 0: HOME position
   - Seq 1: Fixed-wing runway takeoff (MAV_CMD_NAV_TAKEOFF with 15 deg minimum pitch)
-  - Seq 2: Upwind navigation waypoint (350m North, 60m altitude)
-  - Seq 3: Downwind/base leg waypoint (300m South, 45m altitude)
-  - Seq 4: Final approach waypoint (150m South, 20m altitude, aligned with runway)
-  - Seq 5: Autonomous fixed-wing runway landing (MAV_CMD_NAV_LAND at HOME, 0m altitude)
+  - Seq 2: Outbound navigation waypoint (350m North, 60m altitude)
+  - Seq 3: MAV_CMD_DO_RETURN_PATH_START marker (safe inbound corridor entry)
+  - Seq 4: Return / base leg waypoint (300m South, 150m East, 45m altitude)
+  - Seq 5: MAV_CMD_DO_LAND_START marker (landing pattern entry)
+  - Seq 6: Final approach waypoint (180m South, 20m altitude, aligned with runway)
+  - Seq 7: Autonomous fixed-wing runway landing (MAV_CMD_NAV_LAND at HOME, 0m altitude)
 
 Note:
     Unlike multirotors (ArduCopter), a pure fixed-wing aircraft on ArduPlane does not
-    have a standalone "LAND" flight mode; autonomous landings are performed via a
-    MAV_CMD_NAV_LAND mission item in AUTO mode.
+    have a standalone "LAND" flight mode; autonomous landings are triggered via
+    MAV_CMD_DO_LAND_START and executed through a MAV_CMD_NAV_LAND mission item in AUTO mode.
 """
 
 import time
@@ -71,28 +74,32 @@ def main():
                     y=gps_home.lon,
                     z=50.0,
                 ),
-                # Seq 2: Upwind waypoint at 60m
+                # Seq 2: Outbound waypoint at 60m
                 MissionItem(
                     command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT,
                     x=wp_upwind.latitude,
                     y=wp_upwind.longitude,
                     z=60.0,
                 ),
-                # Seq 3: Base leg waypoint descending to 45m
+                # Seq 3: Return-path segment marker (used by do_return_path_start())
+                MissionItem(command=mavutil.mavlink.MAV_CMD_DO_RETURN_PATH_START),
+                # Seq 4: Base leg waypoint descending to 45m
                 MissionItem(
                     command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT,
                     x=wp_base.latitude,
                     y=wp_base.longitude,
                     z=45.0,
                 ),
-                # Seq 4: Final approach waypoint at 20m aligned with the runway
+                # Seq 5: Landing sequence marker (used by do_land_start())
+                MissionItem(command=mavutil.mavlink.MAV_CMD_DO_LAND_START),
+                # Seq 6: Final approach waypoint at 20m aligned with the runway
                 MissionItem(
                     command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT,
                     x=wp_final.latitude,
                     y=wp_final.longitude,
                     z=20.0,
                 ),
-                # Seq 5: Fixed-wing runway touchdown at HOME
+                # Seq 7: Fixed-wing runway touchdown at HOME
                 MissionItem(
                     command=mavutil.mavlink.MAV_CMD_NAV_LAND,
                     x=gps_home.lat,
@@ -112,6 +119,20 @@ def main():
                 print("Failed to start mission.")
                 return
 
+            # Wait until the aircraft climbs above 40m and reaches the outbound leg
+            while plane.position_gps().relative_alt < 40.0:
+                time.sleep(1.0)
+
+            # Example: cut the outbound leg short by joining the safe return path via do_return_path_start()
+            print("Joining safe return path via do_return_path_start()...")
+            plane.do_return_path_start(timeout_ack=3)
+            time.sleep(3.0)
+
+            # Example: jump directly into the mission landing pattern via do_land_start()
+            print("Jumping to mission landing sequence via do_land_start()...")
+            plane.do_land_start(timeout_ack=3)
+
+            go_around_tested = False
             while not plane.is_waypoint_mission_completed():
                 seq = plane.current_waypoint_seq()
                 pos = plane.position_gps()
@@ -124,6 +145,11 @@ def main():
                     f"Hdg: {hud.heading}° | Thr: {hud.throttle}% | "
                     f"Wind: {wnd.speed:.1f}m/s @ {wnd.direction:.0f}°"
                 )
+                # Demonstrate a single go-around once on final (WP #7 = MAV_CMD_NAV_LAND), then land normally
+                if seq == 7 and not go_around_tested:
+                    print("Runway check failed -> aborting landing via do_go_around(altitude=45.0)!")
+                    if plane.do_go_around(altitude=45.0, timeout_ack=3):
+                        go_around_tested = True
                 time.sleep(2.0)
 
             print("Mission completed! Waiting for aircraft to disarm after landing roll...")
