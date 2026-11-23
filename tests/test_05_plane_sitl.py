@@ -68,8 +68,9 @@ def plane_drone(plane_sitl, tmp_path_factory):
     )
 
     try:
-        # Disable pre-arm checks for simulation
-        mav.write_parameter("ARMING_CHECK", 0, mavutil.mavlink.MAV_PARAM_TYPE_REAL32)
+        # Disable pre-arm checks for simulation (ARMING_SKIPCHK=-1 on ArduPilot 4.7+, ARMING_CHECK=0 on older versions)
+        if not mav.write_parameter("ARMING_SKIPCHK", -1, mavutil.mavlink.MAV_PARAM_TYPE_INT32, timeout_ack=1.0):
+            mav.write_parameter("ARMING_CHECK", 0, mavutil.mavlink.MAV_PARAM_TYPE_REAL32, timeout_ack=1.0)
         time.sleep(1)
 
         # Wait for 3D GPS Fix
@@ -133,6 +134,10 @@ def test_plane_auto_takeoff_mission_and_guided_flight(plane_drone):
         MissionItem(command=mavutil.mavlink.MAV_CMD_DO_LAND_START),
         MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_LAND, x=gps0.lat, y=gps0.lon, z=0.0),
     ]
+
+    # Set RTL_AUTOLAND = 3 (NO_RTL_GO_AROUND) so ArduPlane pre-arm checks allow arming
+    # with DO_LAND_START / DO_RETURN_PATH_START in the mission while keeping normal RTL mode
+    assert plane_drone.write_parameter("RTL_AUTOLAND", 3.0) is True
 
     assert plane_drone.upload_mission(waypoints=mission, clear_existing=True, timeout=15.0) is True
 

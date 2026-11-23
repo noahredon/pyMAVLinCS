@@ -69,8 +69,9 @@ def drone(sitl, tmp_path_factory):
     )
 
     try:
-        # Disable pre-arm checks for simulation
-        mav.write_parameter("ARMING_CHECK", 0, mavutil.mavlink.MAV_PARAM_TYPE_REAL32)
+        # Disable pre-arm checks for simulation (ARMING_SKIPCHK=-1 on ArduPilot 4.7+, ARMING_CHECK=0 on older versions)
+        if not mav.write_parameter("ARMING_SKIPCHK", -1, mavutil.mavlink.MAV_PARAM_TYPE_INT32, timeout_ack=1.0):
+            mav.write_parameter("ARMING_CHECK", 0, mavutil.mavlink.MAV_PARAM_TYPE_REAL32, timeout_ack=1.0)
         time.sleep(1)
 
         # 1. Wait for 3D GPS Fix

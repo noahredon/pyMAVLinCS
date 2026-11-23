@@ -108,6 +108,9 @@ def main():
                 ),
             ]
 
+            # Allow arming with DO_LAND_START / DO_RETURN_PATH_START on ArduPlane (RTL_AUTOLAND=0 blocks arming)
+            plane.write_parameter("RTL_AUTOLAND", 3.0, timeout_ack=2.0)
+
             print(f"Uploading fixed-wing mission ({len(mission_items)} items)...")
             if not plane.upload_mission(waypoints=mission_items, clear_existing=True, timeout=15.0):
                 print("Mission upload failed.")
