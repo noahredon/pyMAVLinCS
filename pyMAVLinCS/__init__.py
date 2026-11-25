@@ -19,6 +19,42 @@ from pyMAVLinCS.setup_logger import setup_logger, default_logger
 
 class MAVLinCS:
     """Allows connection to one or more flight controllers on one link."""
+
+    _COPTER_MAV_TYPES = tuple(dict.fromkeys(
+        getattr(mavutil.mavlink, name)
+        for name in (
+            "MAV_TYPE_QUADROTOR",
+            "MAV_TYPE_HEXAROTOR",
+            "MAV_TYPE_OCTOROTOR",
+            "MAV_TYPE_TRICOPTER",
+            "MAV_TYPE_HELICOPTER",
+            "MAV_TYPE_COAXIAL",
+            "MAV_TYPE_DECAROTOR",
+            "MAV_TYPE_DODECAROTOR",
+            "MAV_TYPE_GENERIC_MULTIROTOR",
+        )
+        if hasattr(mavutil.mavlink, name)
+    ))
+
+    _VTOL_MAV_TYPES = tuple(dict.fromkeys(
+        getattr(mavutil.mavlink, name)
+        for name in (
+            "MAV_TYPE_VTOL_DUOROTOR",
+            "MAV_TYPE_VTOL_TAILSITTER_DUOROTOR",
+            "MAV_TYPE_VTOL_QUADROTOR",
+            "MAV_TYPE_VTOL_TAILSITTER_QUADROTOR",
+            "MAV_TYPE_VTOL_TILTROTOR",
+            "MAV_TYPE_VTOL_TAILSITTER",
+            "MAV_TYPE_VTOL_RESERVED2",
+            "MAV_TYPE_VTOL_FIXEDROTOR",
+            "MAV_TYPE_VTOL_RESERVED3",
+            "MAV_TYPE_VTOL_RESERVED4",
+            "MAV_TYPE_VTOL_RESERVED5",
+            "MAV_TYPE_VTOL_GYRODYNE",
+        )
+        if hasattr(mavutil.mavlink, name)
+    ))
+
     def __init__(self,
             address: str,
             baud: int = 57600,
@@ -569,6 +605,15 @@ class MAVLinCS:
                 source_system=source_system
             )
             if hb:
+                if (
+                    hb.autopilot == mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA
+                    and hb.type in self._VTOL_MAV_TYPES
+                    and mavutil.mode_mapping_bynumber(hb.type) is None
+                    and (hb.base_mode & mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED)
+                ):
+                    fw_map = mavutil.mode_mapping_bynumber(mavutil.mavlink.MAV_TYPE_FIXED_WING)
+                    if fw_map and hb.custom_mode in fw_map:
+                        return fw_map[hb.custom_mode]
                 return mavutil.mode_string_v10(hb)
             # Fallback: we check HIGH_LATENCY2
             high_latency2 = self.get_msg(
@@ -2253,17 +2298,7 @@ class MAVLinCS:
             target_system = self.master.target_system
 
         is_on_ardupilot = bool(self.autopilot_int(source_system=target_system) == mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA)
-        is_copter = bool(self.vehicle_type_int(source_system=target_system) in [
-            mavutil.mavlink.MAV_TYPE_QUADROTOR,
-            mavutil.mavlink.MAV_TYPE_HEXAROTOR,
-            mavutil.mavlink.MAV_TYPE_OCTOROTOR,
-            mavutil.mavlink.MAV_TYPE_TRICOPTER,
-            mavutil.mavlink.MAV_TYPE_HELICOPTER,
-            mavutil.mavlink.MAV_TYPE_COAXIAL,
-            mavutil.mavlink.MAV_TYPE_DECAROTOR,
-            mavutil.mavlink.MAV_TYPE_DODECAROTOR,
-            mavutil.mavlink.MAV_TYPE_GENERIC_MULTIROTOR,
-        ])
+        is_copter = bool(self.vehicle_type_int(source_system=target_system) in self._COPTER_MAV_TYPES)
 
         if is_on_ardupilot and is_copter:
             if throttle != -1.0:
@@ -2354,26 +2389,11 @@ class MAVLinCS:
                 target_system = self.master.target_system
 
             is_on_ardupilot = bool(self.autopilot_int(source_system=target_system) == mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA)
-            is_copter = bool(self.vehicle_type_int(source_system=target_system) in [
-                mavutil.mavlink.MAV_TYPE_QUADROTOR,
-                mavutil.mavlink.MAV_TYPE_HEXAROTOR,
-                mavutil.mavlink.MAV_TYPE_OCTOROTOR,
-                mavutil.mavlink.MAV_TYPE_TRICOPTER,
-                mavutil.mavlink.MAV_TYPE_HELICOPTER,
-                mavutil.mavlink.MAV_TYPE_COAXIAL,
-                mavutil.mavlink.MAV_TYPE_DODECAROTOR
-            ])
-            is_fixed_wing = bool(self.vehicle_type_int(source_system=target_system) in [
+            is_copter = bool(self.vehicle_type_int(source_system=target_system) in self._COPTER_MAV_TYPES)
+            is_fixed_wing = bool(self.vehicle_type_int(source_system=target_system) in (
                 mavutil.mavlink.MAV_TYPE_FIXED_WING,
-                mavutil.mavlink.MAV_TYPE_VTOL_DUOROTOR,
-                mavutil.mavlink.MAV_TYPE_VTOL_QUADROTOR,
-                mavutil.mavlink.MAV_TYPE_VTOL_TILTROTOR,
-                getattr(mavutil.mavlink, "MAV_TYPE_VTOL_TAILSITTER", mavutil.mavlink.MAV_TYPE_VTOL_RESERVED2),
-                getattr(mavutil.mavlink, "MAV_TYPE_VTOL_FIXEDROTOR", mavutil.mavlink.MAV_TYPE_VTOL_RESERVED3),
-                mavutil.mavlink.MAV_TYPE_VTOL_RESERVED4,
-                mavutil.mavlink.MAV_TYPE_VTOL_RESERVED5,
-                mavutil.mavlink.MAV_TYPE_VTOL_GYRODYNE
-            ])
+                *self._VTOL_MAV_TYPES,
+            ))
 
             # ArduCopter requires already being in GUIDED mode before accepting DO_REPOSITION
             if force_guided and is_on_ardupilot and is_copter:
@@ -2600,16 +2620,35 @@ class MAVLinCS:
             target_system: int|None = None,
             **kwargs
         ) -> bool:
-        """Perform a simple landing. Currently implemented only for ArduPilot.
+        """Perform an automated landing. Currently implemented only for ArduPilot.
+
+        Automatically adapts the landing strategy to the vehicle type:
+
+        - **Multirotors (ArduCopter)**: Switches to ``LAND`` flight mode and waits for touchdown and disarm.
+        - **VTOL / QuadPlane (ArduPlane)**: Switches to ``QLAND`` flight mode (vertical descent) and waits for touchdown and disarm.
+          Detected via ``MAV_TYPE_VTOL_*`` or a non-undefined ``EXTENDED_SYS_STATE.vtol_state`` (for QuadPlanes reporting ``MAV_TYPE_FIXED_WING``).
+        - **Fixed-Wing (ArduPlane)**: Triggers the mission landing sequence via ``do_land_start()`` (``MAV_CMD_DO_LAND_START`` -> ``AUTO`` mode).
+          If no ``MAV_CMD_DO_LAND_START`` sequence is present in the mission, falls back to ``AUTOLAND`` flight mode (ArduPlane 4.6+), then waits for touchdown and disarm.
 
         Args:
             target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
             **timeout_ack (float|None): Timeout while waiting for the ack. Default: 2.
             **timeout_set_mode (float|None): Timeout while waiting for the mode change. Default: 3.
-            **timeout_land (float|None): Timeout while waiting for the landing to complete. Default: None.
+            **timeout_land (float|None): Timeout while waiting for the landing (motors disarmed) to complete. 0 skips waiting (returns False). None means no timeout. Default: None.
 
         Returns:
             bool: Result of the operation.
+
+        Note:
+            - On Fixed-Wing (ArduPlane), mission-based landing requires a ``MAV_CMD_DO_LAND_START`` item followed by
+              a landing sequence (ending with ``MAV_CMD_NAV_LAND``) in the uploaded mission. Without one, ``land()``
+              falls back to ArduPlane's ``AUTOLAND`` mode (requires ArduPlane 4.6+, aircraft airborne, and a captured
+              takeoff direction).
+            - On Fixed-Wing (ArduPlane), automatic disarm after touchdown depends on the ``LAND_DISARMDELAY`` parameter
+              (default: 20 s). If ``LAND_DISARMDELAY`` is set to 0, the aircraft will not auto-disarm on landing and
+              waiting for disarm will time out unless handled accordingly.
+            - On VTOL / QuadPlane, if you prefer to execute a planned mission landing (e.g., ``NAV_VTOL_LAND``)
+              instead of vertical ``QLAND`` at the current position, call ``do_land_start()`` directly.
         """
         self.logger.info("Landing..")
         timeout_ack = kwargs.get('timeout_ack', 2)
@@ -2625,24 +2664,76 @@ class MAVLinCS:
             self.logger.error("Master object is not defined!")
             return False
 
+        if target_system is None:
+            target_system = self.master.target_system
+
         if self.autopilot_int(source_system=target_system) != mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA:
             self.logger.error("Landing not implemented outside ArduPilot")
             return False
 
-        if not self.set_mode(
-            mode="LAND",
-            target_system=target_system,
-            timeout_ack=timeout_ack,
-            timeout_set_mode=timeout_set_mode
-        ):
-            self.logger.critical("Landing failed")
-            return False
+        vtype = self.vehicle_type_int(source_system=target_system)
+        ext_state = self.get_msg(msg_type="EXTENDED_SYS_STATE", source_system=target_system)
+        has_vtol_state = bool(
+            ext_state is not None
+            and getattr(ext_state, "vtol_state", mavutil.mavlink.MAV_VTOL_STATE_UNDEFINED)
+            != mavutil.mavlink.MAV_VTOL_STATE_UNDEFINED
+        )
+        is_vtol = (vtype in self._VTOL_MAV_TYPES) or (
+            vtype == mavutil.mavlink.MAV_TYPE_FIXED_WING and has_vtol_state
+        )
+        is_fixed_wing = (vtype == mavutil.mavlink.MAV_TYPE_FIXED_WING) and not is_vtol
+
+        if is_vtol:
+            expected_mode = "QLAND"
+            if not self.set_mode(
+                mode=expected_mode,
+                target_system=target_system,
+                timeout_ack=timeout_ack,
+                timeout_set_mode=timeout_set_mode
+            ):
+                self.logger.critical("Landing failed")
+                return False
+        elif is_fixed_wing:
+            if self.do_land_start(target_system=target_system, timeout_ack=timeout_ack):
+                expected_mode = "AUTO"
+                if timeout_set_mode != 0:
+                    if not self.wait_mode_changed(
+                        mode=expected_mode,
+                        source_system=target_system,
+                        timeout=timeout_set_mode
+                    ):
+                        self.logger.critical("Landing failed: vehicle did not enter AUTO mode after DO_LAND_START")
+                        return False
+            else:
+                if self.mission_ended:
+                    self.logger.critical("Mission stopped: Unable to land")
+                    return False
+                self.logger.warning("DO_LAND_START unavailable or refused: falling back to AUTOLAND mode..")
+                expected_mode = "AUTOLAND"
+                if not self.set_mode(
+                    mode=expected_mode,
+                    target_system=target_system,
+                    timeout_ack=timeout_ack,
+                    timeout_set_mode=timeout_set_mode
+                ):
+                    self.logger.critical("Landing failed")
+                    return False
+        else:
+            expected_mode = "LAND"
+            if not self.set_mode(
+                mode=expected_mode,
+                target_system=target_system,
+                timeout_ack=timeout_ack,
+                timeout_set_mode=timeout_set_mode
+            ):
+                self.logger.critical("Landing failed")
+                return False
 
         if timeout_land == 0:
             self.logger.warning("Null timeout: not waiting for landing")
             return False
 
-        self.logger.info("Waiting for landing..")
+        self.logger.info("Waiting for landing (mode: %s)..", expected_mode)
         start_time = time.time()
         while True:
             disarmed = self.motors_disarmed(source_system=target_system)
@@ -2655,13 +2746,13 @@ class MAVLinCS:
                 return True
 
             if self.autopilot_int(source_system=target_system) == mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA:
-                if self.mode(source_system=target_system) != "LAND":
+                if self.mode(source_system=target_system) != expected_mode:
                     self.logger.error("Mode changed: stopping wait for landing")
                     return False
 
             if timeout_land is not None and time.time() > start_time + timeout_land:
                 self.logger.error("Timeout: stopping wait for landing")
-                return disarmed
+                return bool(disarmed)
             time.sleep(0.05)
 
     def write_parameter(self,
@@ -4386,7 +4477,10 @@ class MAVLinCS:
             return mavutil.px4_map
         if mav_type is None:
             return None
-        return mavutil.mode_mapping_byname(mav_type)
+        mapping = mavutil.mode_mapping_byname(mav_type)
+        if mapping is None and mav_autopilot == mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA and mav_type in self._VTOL_MAV_TYPES:
+            return mavutil.mode_mapping_byname(mavutil.mavlink.MAV_TYPE_FIXED_WING)
+        return mapping
 
     # ----------
     # Connection

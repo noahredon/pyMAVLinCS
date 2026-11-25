@@ -539,6 +539,163 @@ def test_landing_and_return_path_commands_offline():
         mav.close()
 
 
+def test_land_vehicle_types_offline():
+    """Tests land() offline across Multirotor (LAND), VTOL/QuadPlane (QLAND), and Fixed-Wing (DO_LAND_START -> AUTO / AUTOLAND fallback)."""
+    scenarios = [
+        # (mav_type, vtol_state, accept_do_land_start, accept_autoland, expected_result, expected_cmds, expected_final_mode)
+        (
+            mavutil.mavlink.MAV_TYPE_QUADROTOR,
+            mavutil.mavlink.MAV_VTOL_STATE_MC,  # ArduCopter reports MAV_VTOL_STATE_MC in EXTENDED_SYS_STATE
+            False,
+            False,
+            True,
+            [(mavutil.mavlink.MAV_CMD_DO_SET_MODE, 9.0)],  # Copter LAND = 9
+            "LAND",
+        ),
+        (
+            mavutil.mavlink.MAV_TYPE_VTOL_QUADROTOR,
+            mavutil.mavlink.MAV_VTOL_STATE_UNDEFINED,
+            False,
+            False,
+            True,
+            [(mavutil.mavlink.MAV_CMD_DO_SET_MODE, 20.0)],  # Plane QLAND = 20
+            "QLAND",
+        ),
+        (
+            getattr(mavutil.mavlink, "MAV_TYPE_VTOL_TAILSITTER", mavutil.mavlink.MAV_TYPE_VTOL_RESERVED2),
+            mavutil.mavlink.MAV_VTOL_STATE_UNDEFINED,
+            False,
+            False,
+            True,
+            [(mavutil.mavlink.MAV_CMD_DO_SET_MODE, 20.0)],  # Plane QLAND = 20 (mapped via Fixed-Wing fallback)
+            "QLAND",
+        ),
+        (
+            mavutil.mavlink.MAV_TYPE_FIXED_WING,
+            mavutil.mavlink.MAV_VTOL_STATE_FW,  # QuadPlane with Q_MAV_TYPE=0 detected via EXTENDED_SYS_STATE
+            False,
+            False,
+            True,
+            [(mavutil.mavlink.MAV_CMD_DO_SET_MODE, 20.0)],  # Plane QLAND = 20
+            "QLAND",
+        ),
+        (
+            mavutil.mavlink.MAV_TYPE_FIXED_WING,
+            mavutil.mavlink.MAV_VTOL_STATE_UNDEFINED,
+            True,  # Mission contains DO_LAND_START
+            False,
+            True,
+            [(mavutil.mavlink.MAV_CMD_DO_LAND_START, 0.0)],  # DO_LAND_START -> AUTO (10)
+            "AUTO",
+        ),
+        (
+            mavutil.mavlink.MAV_TYPE_FIXED_WING,
+            mavutil.mavlink.MAV_VTOL_STATE_UNDEFINED,
+            False,  # No DO_LAND_START in mission -> fallback to AUTOLAND (26)
+            True,
+            True,
+            [
+                (mavutil.mavlink.MAV_CMD_DO_LAND_START, 0.0),
+                (mavutil.mavlink.MAV_CMD_DO_SET_MODE, 26.0),
+            ],
+            "AUTOLAND",
+        ),
+        (
+            mavutil.mavlink.MAV_TYPE_FIXED_WING,
+            mavutil.mavlink.MAV_VTOL_STATE_UNDEFINED,
+            False,  # Both DO_LAND_START and AUTOLAND refused -> returns False
+            False,
+            False,
+            [
+                (mavutil.mavlink.MAV_CMD_DO_LAND_START, 0.0),
+                (mavutil.mavlink.MAV_CMD_DO_SET_MODE, 26.0),
+            ],
+            "GUIDED",
+        ),
+    ]
+
+    for mav_type, vtol_state, accept_dls, accept_autoland, expected_ok, expected_cmds, expected_mode in scenarios:
+        mav = MAVLinCS(
+            address="udpin:127.0.0.1:0",
+            timeout_heartbeat=0,
+            pos_rate=0,
+            mavlogfile=None,
+        )
+        try:
+            mav.master.target_system = 1
+            ap_mav = mavutil.mavlink.MAVLink(None, srcSystem=1, srcComponent=1)
+            recorded_cmds = []
+
+            def inject(msg):
+                pkt = msg.pack(ap_mav)
+                decoded = mav.master.mav.decode(bytearray(pkt))
+                decoded._timestamp = time.time()
+                mav.master.post_message(decoded)
+                with mav.mavthread._lock:
+                    mav.mavthread._queue.append(decoded)
+                    mav.mavthread._msg_received.set()
+
+            def send_hb(custom_mode: int, armed: bool):
+                base_mode = mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED
+                if armed:
+                    base_mode |= mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED
+                inject(ap_mav.heartbeat_encode(
+                    mav_type,
+                    mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA,
+                    base_mode,
+                    custom_mode,
+                    mavutil.mavlink.MAV_STATE_ACTIVE,
+                ))
+
+            # Initial armed heartbeat in GUIDED mode (4 for Copter, 15 for Plane/VTOL)
+            guided_mode_id = 4 if mav_type == mavutil.mavlink.MAV_TYPE_QUADROTOR else 15
+            send_hb(guided_mode_id, armed=True)
+            inject(ap_mav.extended_sys_state_encode(
+                vtol_state,
+                mavutil.mavlink.MAV_LANDED_STATE_IN_AIR,
+            ))
+
+            def on_gcs_send(m):
+                if m.get_type() != "COMMAND_LONG":
+                    return
+                recorded_cmds.append((m.command, m.param2))
+                if m.command == mavutil.mavlink.MAV_CMD_DO_LAND_START:
+                    if accept_dls:
+                        inject(ap_mav.command_ack_encode(
+                            m.command, mavutil.mavlink.MAV_RESULT_ACCEPTED, 0, 0,
+                            mav.master.source_system, mav.master.source_component,
+                        ))
+                        # Switch to AUTO (10) and simulate touchdown + disarm
+                        send_hb(10, armed=False)
+                    else:
+                        inject(ap_mav.command_ack_encode(
+                            m.command, mavutil.mavlink.MAV_RESULT_FAILED, 0, 0,
+                            mav.master.source_system, mav.master.source_component,
+                        ))
+                elif m.command == mavutil.mavlink.MAV_CMD_DO_SET_MODE:
+                    target_mode = int(m.param2)
+                    if target_mode == 26 and not accept_autoland:
+                        inject(ap_mav.command_ack_encode(
+                            m.command, mavutil.mavlink.MAV_RESULT_FAILED, 0, 0,
+                            mav.master.source_system, mav.master.source_component,
+                        ))
+                    else:
+                        inject(ap_mav.command_ack_encode(
+                            m.command, mavutil.mavlink.MAV_RESULT_ACCEPTED, 0, 0,
+                            mav.master.source_system, mav.master.source_component,
+                        ))
+                        send_hb(target_mode, armed=False)
+
+            mav.set_additional_send_callback(on_gcs_send)
+
+            result = mav.land(timeout_ack=1.0, timeout_set_mode=1.0, timeout_land=2.0)
+            assert result is expected_ok
+            assert recorded_cmds == expected_cmds
+            assert mav.mode() == expected_mode
+        finally:
+            mav.close()
+
+
 def test_safety_guards_and_invalid_inputs(drone):
     # PWM out of bounds [1000, 2000]
     assert drone.set_servo(servo_channel=9, pwm=950) is False

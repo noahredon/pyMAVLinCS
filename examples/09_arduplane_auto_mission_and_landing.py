@@ -16,7 +16,10 @@ do_return_path_start(), do_land_start(), and do_go_around():
 Note:
     Unlike multirotors (ArduCopter), a pure fixed-wing aircraft on ArduPlane does not
     have a standalone "LAND" flight mode; autonomous landings are triggered via
-    MAV_CMD_DO_LAND_START and executed through a MAV_CMD_NAV_LAND mission item in AUTO mode.
+    MAV_CMD_DO_LAND_START (executed through a MAV_CMD_NAV_LAND mission item in AUTO mode)
+    or ArduPlane's AUTOLAND mode. Calling ``plane.land()`` automatically uses
+    ``do_land_start()`` (with fallback to ``AUTOLAND``) on fixed-wing aircraft, and
+    ``QLAND`` on VTOL / QuadPlane vehicles.
 """
 
 import time

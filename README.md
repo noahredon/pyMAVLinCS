@@ -55,7 +55,7 @@ Gain instant access to crucial flight and system data using simple method calls 
 
 Execute mission-critical commands with built-in acknowledgment handling to ensure reliable action completion:
 - 🔑 **System State Management:** Safely arm (`arm`) or disarm (`disarm`) the drone, with automatic pre-arm mode checks on ArduPilot, optional forced execution, and configurable timeouts.
-- 🚁 **Takeoff & Landing:** Initiate automated takeoff (`takeoff`) to a specified altitude (including in-air vertical repositioning) or perform an automated landing (`land`).
+- 🚁 **Takeoff & Landing:** Initiate automated takeoff (`takeoff`) to a specified altitude (including in-air vertical repositioning) or perform an automated landing (`land`) across multirotors (`LAND`), VTOL/QuadPlanes (`QLAND`), and fixed-wing aircraft (`DO_LAND_START` / `AUTOLAND`).
 - 🔄 **Flight Mode Control:** Change the flight mode using human-readable mode names, ArduPilot mode IDs, or PX4 mode tuples (`set_mode`).
 - 🗺️ **Targeted Movement:** Set precise GPS position targets (`set_gps_pos_target`), command 3D GPS repositioning across both multirotors and fixed-wing aircraft (`do_reposition`), or set local NED position targets (`set_local_pos_target`) with optional yaw control.
 - ✈️ **Reposition** Commands the vehicle to reposition to a specific GPS location (`do_reposition`) with optional arguments. Can be used for fixed-wings in Guided/Hold mode.

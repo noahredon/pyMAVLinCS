@@ -232,6 +232,16 @@ def test_plane_auto_takeoff_mission_and_guided_flight(plane_drone):
     assert plane_drone.return_to_launch(timeout_ack=3) is True
     assert plane_drone.wait_mode_changed("RTL", timeout=5) is True
 
+    # Test land() on Fixed-Wing WITH a DO_LAND_START mission item: triggers DO_LAND_START -> AUTO
+    assert plane_drone.land(timeout_ack=3, timeout_set_mode=5, timeout_land=0) is False
+    assert plane_drone.mode() == "AUTO"
+
+    # Test land() on Fixed-Wing WITHOUT DO_LAND_START: falls back to AUTOLAND mode (ArduPlane 4.6+)
+    assert plane_drone.set_mode("GUIDED", timeout_ack=3, timeout_set_mode=5) is True
+    assert plane_drone.clear_waypoints(timeout_ack=3) is True
+    assert plane_drone.land(timeout_ack=3, timeout_set_mode=5, timeout_land=0) is False
+    assert plane_drone.mode() == "AUTOLAND"
+
     # Force disarm to conclude test cleanly
     assert plane_drone.disarm(force=True, timeout_ack=3, timeout_disarming=10) is True
     assert plane_drone.motors_disarmed() is True
