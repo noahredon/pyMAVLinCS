@@ -236,6 +236,8 @@ def test_offline_open_close_and_thread_lifecycle(tmp_path):
     assert math.isnan(mav.autopilot_int())
     assert mav.vehicle_type_str() == "UNKNOWN"
     assert math.isnan(mav.vehicle_type_int())
+    assert math.isnan(mav.vtol_state())
+    assert mav.vtol_state_str() == "UNKNOWN"
     assert math.isnan(mav.custom_mode())
     assert math.isnan(mav.base_mode())
     assert math.isnan(mav.custom_main_mode())
@@ -885,6 +887,123 @@ def test_takeoff_vehicle_types_offline():
     assert ok is False
 
 
+def test_vtol_state_and_transition_offline():
+    """Tests vtol_state(), vtol_state_str(), and vtol_transition() offline across ArduPilot and PX4 behaviors."""
+    mav = MAVLinCS(address="udpin:127.0.0.1:0", timeout_heartbeat=0, pos_rate=0, mavlogfile=None)
+    try:
+        mav.master.target_system = 1
+        ap_mav = mavutil.mavlink.MAVLink(None, srcSystem=1, srcComponent=1)
+
+        def inject(msg):
+            pkt = msg.pack(ap_mav)
+            decoded = mav.master.mav.decode(bytearray(pkt))
+            decoded._timestamp = time.time()
+            mav.master.post_message(decoded)
+            with mav.mavthread._lock:
+                mav.mavthread._queue.append(decoded)
+                mav.mavthread._msg_received.set()
+
+        # 1. Verify vtol_state() and vtol_state_str() for all valid MAV_VTOL_STATE values
+        for state_val, state_name in [
+            (mavutil.mavlink.MAV_VTOL_STATE_UNDEFINED, "MAV_VTOL_STATE_UNDEFINED"),
+            (mavutil.mavlink.MAV_VTOL_STATE_TRANSITION_TO_FW, "MAV_VTOL_STATE_TRANSITION_TO_FW"),
+            (mavutil.mavlink.MAV_VTOL_STATE_TRANSITION_TO_MC, "MAV_VTOL_STATE_TRANSITION_TO_MC"),
+            (mavutil.mavlink.MAV_VTOL_STATE_MC, "MAV_VTOL_STATE_MC"),
+            (mavutil.mavlink.MAV_VTOL_STATE_FW, "MAV_VTOL_STATE_FW"),
+        ]:
+            inject(ap_mav.extended_sys_state_encode(state_val, mavutil.mavlink.MAV_LANDED_STATE_IN_AIR))
+            assert mav.vtol_state() == state_val
+            assert mav.vtol_state_str() == state_name
+
+        # 2. Invalid target states (including strings and bools) & invalid timeout_transition must be rejected before sending
+        for bad_state in (
+            mavutil.mavlink.MAV_VTOL_STATE_UNDEFINED,
+            mavutil.mavlink.MAV_VTOL_STATE_TRANSITION_TO_FW,
+            mavutil.mavlink.MAV_VTOL_STATE_TRANSITION_TO_MC,
+            99,
+            "FW",
+            "MC",
+            "INVALID",
+            True,
+            False,
+        ):
+            assert mav.vtol_transition(bad_state) is False
+        assert mav.vtol_transition(mavutil.mavlink.MAV_VTOL_STATE_FW, timeout_transition=-1.0) is False
+        assert mav.vtol_transition(mavutil.mavlink.MAV_VTOL_STATE_FW, timeout_transition=math.nan) is False
+
+        # 3. Simulate ArduPlane QuadPlane in AUTO mode
+        inject(ap_mav.heartbeat_encode(
+            mavutil.mavlink.MAV_TYPE_VTOL_QUADROTOR,
+            mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA,
+            mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED | mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED,
+            10,  # AUTO
+            mavutil.mavlink.MAV_STATE_ACTIVE,
+        ))
+        inject(ap_mav.extended_sys_state_encode(
+            mavutil.mavlink.MAV_VTOL_STATE_MC,
+            mavutil.mavlink.MAV_LANDED_STATE_IN_AIR,
+        ))
+
+        recorded = []
+        ack_result = [mavutil.mavlink.MAV_RESULT_ACCEPTED]
+        auto_complete = [True]
+
+        def on_gcs_send(m):
+            if m.get_type() == "COMMAND_LONG" and m.command == mavutil.mavlink.MAV_CMD_DO_VTOL_TRANSITION:
+                recorded.append((m.param1, m.param2))
+                inject(ap_mav.command_ack_encode(
+                    m.command, ack_result[0], 0, 0,
+                    mav.master.source_system, mav.master.source_component,
+                ))
+                if ack_result[0] == mavutil.mavlink.MAV_RESULT_ACCEPTED and auto_complete[0]:
+                    target = int(m.param1)
+                    in_prog = (
+                        mavutil.mavlink.MAV_VTOL_STATE_TRANSITION_TO_FW
+                        if target == mavutil.mavlink.MAV_VTOL_STATE_FW
+                        else mavutil.mavlink.MAV_VTOL_STATE_TRANSITION_TO_MC
+                    )
+                    inject(ap_mav.extended_sys_state_encode(in_prog, mavutil.mavlink.MAV_LANDED_STATE_IN_AIR))
+                    inject(ap_mav.extended_sys_state_encode(target, mavutil.mavlink.MAV_LANDED_STATE_IN_AIR))
+
+        mav.set_additional_send_callback(on_gcs_send)
+
+        # ArduPilot resets force_immediate (param2=0) + waits for FW completion
+        assert mav.vtol_transition(mavutil.mavlink.MAV_VTOL_STATE_FW, force_immediate=True, timeout_ack=1.0, timeout_transition=2.0) is True
+        assert mav.vtol_state() == mavutil.mavlink.MAV_VTOL_STATE_FW
+        assert recorded[-1] == (float(mavutil.mavlink.MAV_VTOL_STATE_FW), 0.0)
+
+        # Transition back to MC using enum int + timeout_transition=0 (immediate return after ACK)
+        assert mav.vtol_transition(mavutil.mavlink.MAV_VTOL_STATE_MC, timeout_ack=1.0, timeout_transition=0) is True
+        assert recorded[-1] == (float(mavutil.mavlink.MAV_VTOL_STATE_MC), 0.0)
+
+        # Timeout while waiting for transition that never completes
+        auto_complete[0] = False
+        inject(ap_mav.extended_sys_state_encode(
+            mavutil.mavlink.MAV_VTOL_STATE_MC,
+            mavutil.mavlink.MAV_LANDED_STATE_IN_AIR,
+        ))
+        assert mav.vtol_transition(mavutil.mavlink.MAV_VTOL_STATE_FW, timeout_ack=1.0, timeout_transition=0.15) is False
+
+        # Refused ACK returns False
+        ack_result[0] = mavutil.mavlink.MAV_RESULT_FAILED
+        assert mav.vtol_transition(mavutil.mavlink.MAV_VTOL_STATE_FW, timeout_ack=1.0) is False
+
+        # 4. Simulate PX4 autopilot: force_immediate=True preserves param2=1.0
+        ack_result[0] = mavutil.mavlink.MAV_RESULT_ACCEPTED
+        auto_complete[0] = True
+        inject(ap_mav.heartbeat_encode(
+            mavutil.mavlink.MAV_TYPE_VTOL_QUADROTOR,
+            mavutil.mavlink.MAV_AUTOPILOT_PX4,
+            mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED | mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED,
+            0,
+            mavutil.mavlink.MAV_STATE_ACTIVE,
+        ))
+        assert mav.vtol_transition(mavutil.mavlink.MAV_VTOL_STATE_MC, force_immediate=True, timeout_ack=1.0, timeout_transition=1.0) is True
+        assert recorded[-1] == (float(mavutil.mavlink.MAV_VTOL_STATE_MC), 1.0)
+    finally:
+        mav.close()
+
+
 def test_safety_guards_and_invalid_inputs(drone):
     # PWM out of bounds [1000, 2000]
     assert drone.set_servo(servo_channel=9, pwm=950) is False
@@ -924,6 +1043,7 @@ def test_safety_guards_and_invalid_inputs(drone):
     assert drone.disarm() is False
     assert drone.takeoff(10.0) is False
     assert drone.land() is False
+    assert drone.vtol_transition(mavutil.mavlink.MAV_VTOL_STATE_FW) is False
     assert drone.return_to_launch() is False
     assert drone.do_land_start() is False
     assert drone.do_go_around() is False
@@ -957,6 +1077,7 @@ def test_safety_guards_and_invalid_inputs(drone):
     assert drone.disarm() is False
     assert drone.takeoff(10.0) is False
     assert drone.land() is False
+    assert drone.vtol_transition(mavutil.mavlink.MAV_VTOL_STATE_FW) is False
     assert drone.return_to_launch() is False
     assert drone.do_land_start() is False
     assert drone.do_go_around() is False

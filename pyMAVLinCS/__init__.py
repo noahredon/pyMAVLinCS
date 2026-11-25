@@ -799,6 +799,46 @@ class MAVLinCS:
             return mavutil.mavlink.enums["MAV_TYPE"][m.type].name
         return "UNKNOWN"
 
+    def vtol_state(self, source_system: int|None = None) -> int|float:
+        """Current VTOL state.
+
+        Args:
+            source_system (int|None): MAVLink system ID of the device. Defaults to the master's ID.
+
+        Returns:
+            int|float: ``MAV_VTOL_STATE``. NaN if no data has been received.
+
+        Note:
+            - Returns ``MAV_VTOL_STATE_UNDEFINED`` on non-VTOL Fixed-Wing ArduPlane aircraft.
+            - Returns ``MAV_VTOL_STATE_MC`` on ArduCopter multirotors.
+        """
+        m = self.get_msg(
+            msg_type="EXTENDED_SYS_STATE",
+            source_system=source_system
+        )
+        if m:
+            return m.vtol_state
+        return math.nan
+
+    def vtol_state_str(self, source_system: int|None = None) -> str:
+        """Current VTOL state.
+
+        Args:
+            source_system (int|None): MAVLink system ID of the device. Defaults to the master's ID.
+
+        Returns:
+            str: ``MAV_VTOL_STATE``. ``UNKNOWN`` if no valid data has been received.
+        """
+        m = self.get_msg(
+            msg_type="EXTENDED_SYS_STATE",
+            source_system=source_system
+        )
+        if m:
+            if m.vtol_state not in mavutil.mavlink.enums["MAV_VTOL_STATE"]:
+                return f"UNKNOWN: {m.vtol_state}"
+            return mavutil.mavlink.enums["MAV_VTOL_STATE"][m.vtol_state].name
+        return "UNKNOWN"
+
     def battery_percentage(self, source_system: int|None = None) -> int|float:
         """Remaining battery (requires proper configuration of the flight controller).
 
@@ -2453,12 +2493,8 @@ class MAVLinCS:
     def _is_vtol_and_fixed_wing(self, target_system: int) -> tuple[bool, bool]:
         """Detects whether the target vehicle is a VTOL/QuadPlane or a pure Fixed-Wing."""
         vtype = self.vehicle_type_int(source_system=target_system)
-        ext_state = self.get_msg(msg_type="EXTENDED_SYS_STATE", source_system=target_system)
-        has_vtol_state = bool(
-            ext_state is not None
-            and getattr(ext_state, "vtol_state", mavutil.mavlink.MAV_VTOL_STATE_UNDEFINED)
-            != mavutil.mavlink.MAV_VTOL_STATE_UNDEFINED
-        )
+        vs = self.vtol_state(source_system=target_system)
+        has_vtol_state = bool(not math.isnan(vs) and vs != mavutil.mavlink.MAV_VTOL_STATE_UNDEFINED)
         is_vtol = (vtype in self._VTOL_MAV_TYPES) or (
             vtype == mavutil.mavlink.MAV_TYPE_FIXED_WING and has_vtol_state
         )
@@ -2855,6 +2891,122 @@ class MAVLinCS:
             if timeout_land is not None and time.time() > start_time + timeout_land:
                 self.logger.error("Timeout: stopping wait for landing")
                 return bool(disarmed)
+            time.sleep(0.05)
+
+    def vtol_transition(self,
+            state: int,
+            force_immediate: bool = False,
+            target_system: int|None = None,
+            **kwargs
+        ) -> bool:
+        """Requests a VTOL transition between Multicopter (MC) and Fixed-Wing (FW) states using ``MAV_CMD_DO_VTOL_TRANSITION``.
+
+        Args:
+            state (int): Target ``MAV_VTOL_STATE``. Only ``MAV_VTOL_STATE_MC`` or ``MAV_VTOL_STATE_FW`` are allowed.
+            force_immediate (bool): Sets ``param2 = 1`` to force an immediate/emergency transition (PX4 quadchute). Ignored on ArduPilot QuadPlane. Default: False.
+            target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
+            **timeout_ack (float|None): ACK wait timeout in seconds. 0 means no wait (returns False). None means no timeout. Default: 2.
+            **timeout_transition (float|None): Timeout in seconds while waiting for ``vtol_state()`` to reach ``state`` after ACK acceptance. 0 skips waiting (returns True once ACK is accepted). None means no timeout. Default: 0.
+
+        Returns:
+            bool: True if the transition command was accepted (and completed if ``timeout_transition != 0``), False otherwise.
+
+        Note:
+            - On ArduPlane (QuadPlane), this command is only accepted while in AUTO** flight mode.
+              Outside AUTO mode, QuadPlane transitions are performed by switching between Q-modes (e.g., ``QLOITER``)
+              and fixed-wing modes (e.g., ``FBWA``, ``CRUISE``, ``GUIDED``).
+            - On PX4, this command is supported across modes and ``force_immediate=True`` triggers an immediate transition (use with caution depending on airspeed and flight envelope).
+        """
+        self.logger.info("Requesting VTOL transition (state=%s)..", state)
+        timeout_ack = kwargs.get('timeout_ack', 2)
+        timeout_transition = kwargs.get('timeout_transition', 0)
+        if self.mission_ended:
+            self.logger.critical("Mission stopped: Unable to perform VTOL transition")
+            return False
+        if not self.allow_actions:
+            self.logger.error("Actions not allowed: Unable to perform VTOL transition")
+            return False
+        if self.master is None:
+            self.logger.error("Master object is not defined!")
+            return False
+
+        if timeout_transition is not None and (not math.isfinite(timeout_transition) or timeout_transition < 0):
+            self.logger.error("Invalid timeout_transition: %s (must be >= 0 or None)", timeout_transition)
+            return False
+
+        # Strictly validate target VTOL state (only MC=3 and FW=4 int enum values are valid)
+        if isinstance(state, bool) or not isinstance(state, int) or state not in (
+            mavutil.mavlink.MAV_VTOL_STATE_MC,
+            mavutil.mavlink.MAV_VTOL_STATE_FW,
+        ):
+            self.logger.error(
+                "Invalid VTOL transition target state: %s (only MAV_VTOL_STATE_MC or MAV_VTOL_STATE_FW are allowed)",
+                state,
+            )
+            return False
+        target_state = state
+
+        if target_system is None:
+            target_system = self.master.target_system
+
+        is_ardupilot = (self.autopilot_int(source_system=target_system) == mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA)
+        param2 = 1 if force_immediate else 0
+        if is_ardupilot:
+            if force_immediate:
+                self.logger.warning("force_immediate (param2) is ignored on ArduPilot QuadPlane")
+                param2 = 0
+            cur_mode = self.mode(source_system=target_system)
+            if cur_mode != "AUTO":
+                self.logger.warning(
+                    "ArduPlane QuadPlane only accepts MAV_CMD_DO_VTOL_TRANSITION in AUTO mode (current mode: %s)",
+                    cur_mode,
+                )
+
+        self.master.mav.command_long_send(
+            target_system, # target_system
+            mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1, # target_component
+            mavutil.mavlink.MAV_CMD_DO_VTOL_TRANSITION, # command
+            1, # confirmation
+            float(target_state), # param1 (MAV_VTOL_STATE_MC or MAV_VTOL_STATE_FW)
+            float(param2), # param2 (0=normal, 1=force immediate on PX4)
+            0,0,0,0,0 # param3-7 (unused)
+        )
+
+        accepted = self.wait_command_ack(
+            command=mavutil.mavlink.MAV_CMD_DO_VTOL_TRANSITION,
+            source_system=target_system,
+            timeout=timeout_ack
+        )
+        if accepted is None: # Mission end or timeout
+            if self.mission_ended:
+                self.logger.critical("Mission ended")
+            else:
+                self.logger.critical("DO_VTOL_TRANSITION timed out")
+            return False
+        elif not accepted: # Refused
+            self.logger.error("DO_VTOL_TRANSITION failed or refused")
+            return False
+
+        self.logger.info("VTOL transition accepted (target state: %s)", mavutil.mavlink.enums["MAV_VTOL_STATE"][target_state].name)
+
+        if timeout_transition == 0:
+            return True
+
+        self.logger.info("Waiting for VTOL transition to complete..")
+        start_time = time.monotonic()
+        while True:
+            if self.mission_ended:
+                self.logger.critical("Mission stopped: stopping wait for VTOL transition")
+                return False
+
+            if self.vtol_state(source_system=target_system) == target_state:
+                self.logger.info("VTOL transition completed")
+                return True
+
+            if timeout_transition is not None and time.monotonic() > start_time + timeout_transition:
+                self.logger.error("Timeout: stopping wait for VTOL transition")
+                return False
+
             time.sleep(0.05)
 
     def write_parameter(self,

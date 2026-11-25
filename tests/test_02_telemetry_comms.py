@@ -14,6 +14,8 @@ def test_telemetry_getters(drone):
 
     assert drone.autopilot_int() == mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA
     assert drone.autopilot_str() == "MAV_AUTOPILOT_ARDUPILOTMEGA"
+    assert drone.vtol_state() == mavutil.mavlink.MAV_VTOL_STATE_MC
+    assert drone.vtol_state_str() == "MAV_VTOL_STATE_MC"
     assert drone.gps_3d_fix() is True
     assert drone.mode() != "UNKNOWN"
     assert not math.isnan(drone.custom_mode())

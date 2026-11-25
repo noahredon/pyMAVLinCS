@@ -47,7 +47,7 @@ Gain instant access to crucial flight and system data using simple method calls 
 - 🛰️ **Global & Local Position:** Retrieve current GPS coordinates (`position_gps`: latitude, longitude, relative altitude, MSL altitude) and local NED coordinates (`position_local`).
 - 🧭 **Attitude, Velocity & Aeronautical HUD:** Get precise attitude Euler angles (`angles`) and angular rates (`angular_rates`). Retrieve 3D NED velocities (`speed`), speed norm (`speed_module`), full aeronautical HUD telemetry (`vfr_hud`, `airspeed`, `groundspeed`, `heading`, `throttle`, `climb_rate`), and EKF wind estimation (`wind`).
 - ⚡ **Power Monitoring:** Check remaining battery percentage (`battery_percentage`) and current voltage in Volts (`battery_voltage`).
-- ⚙️ **Flight Status:** Instantly check arming status (`motors_armed`, `motors_disarmed`), autopilot type (`autopilot_int`, `autopilot_str`), vehicle type (`vehicle_type_int`, `vehicle_type_str`), current flight mode (`mode`, `custom_mode`), and PX4 mode details (`base_mode`, `custom_main_mode`, `custom_sub_mode`).
+- ⚙️ **Flight Status:** Instantly check arming status (`motors_armed`, `motors_disarmed`), autopilot type (`autopilot_int`, `autopilot_str`), vehicle type (`vehicle_type_int`, `vehicle_type_str`), VTOL transition state (`vtol_state`, `vtol_state_str`), current flight mode (`mode`, `custom_mode`), and PX4 mode details (`base_mode`, `custom_main_mode`, `custom_sub_mode`).
 - 🌐 **Fix Status:** Confirm the status of the GPS system, including 3D fix availability (`gps_3d_fix`).
 - 🕒 **Timing Data:** Access system boot time in seconds (`time_boot`) and milliseconds (`time_boot_ms`), and Unix timestamp in microseconds (`time_usec`).
 
@@ -56,7 +56,7 @@ Gain instant access to crucial flight and system data using simple method calls 
 Execute mission-critical commands with built-in acknowledgment handling to ensure reliable action completion:
 - 🔑 **System State Management:** Safely arm (`arm`) or disarm (`disarm`) the drone, with automatic pre-arm mode checks on ArduPilot, optional forced execution, and configurable timeouts.
 - 🚁 **Takeoff & Landing:** Initiate automated takeoff (`takeoff`) across multirotors (`GUIDED` + `NAV_TAKEOFF`), VTOL/QuadPlanes (vertical `GUIDED` + `NAV_TAKEOFF`), and fixed-wing aircraft (`TAKEOFF` mode using autopilot `TKOFF_*` parameters by default), or perform an automated landing (`land`) across multirotors (`LAND`), VTOL/QuadPlanes (`QLAND`), and fixed-wing aircraft (`DO_LAND_START` / `AUTOLAND`).
-- 🔄 **Flight Mode Control:** Change the flight mode using human-readable mode names, ArduPilot mode IDs, or PX4 mode tuples (`set_mode`).
+- 🔄 **Flight Mode & VTOL Transition Control:** Change the flight mode using human-readable mode names, ArduPilot mode IDs, or PX4 mode tuples (`set_mode`), or request a VTOL Multicopter/Fixed-Wing transition (`vtol_transition`).
 - 🗺️ **Targeted Movement:** Set precise GPS position targets (`set_gps_pos_target`), command 3D GPS repositioning across both multirotors and fixed-wing aircraft (`do_reposition`), or set local NED position targets (`set_local_pos_target`) with optional yaw control.
 - ✈️ **Reposition** Commands the vehicle to reposition to a specific GPS location (`do_reposition`) with optional arguments. Can be used for fixed-wings in Guided/Hold mode.
 - 💨 **Velocity & Speed Control:** Directly command velocity components (`set_speed`: North, East, Down in m/s) and heading, or dynamically adjust target airspeed, groundspeed, climb/descent speed, and cruise throttle (`change_speed`).

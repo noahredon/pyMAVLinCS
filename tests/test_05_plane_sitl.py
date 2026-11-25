@@ -97,6 +97,10 @@ def test_plane_telemetry_and_modes(plane_drone):
     """Verifies ArduPlane vehicle type, fixed-wing mode mapping, and mode transitions."""
     assert plane_drone.vehicle_type_int() == mavutil.mavlink.MAV_TYPE_FIXED_WING
     assert plane_drone.vehicle_type_str() == "MAV_TYPE_FIXED_WING"
+    assert plane_drone.vtol_state() == mavutil.mavlink.MAV_VTOL_STATE_UNDEFINED
+    assert plane_drone.vtol_state_str() == "MAV_VTOL_STATE_UNDEFINED"
+    # Non-QuadPlane fixed-wing refuses MAV_CMD_DO_VTOL_TRANSITION
+    assert plane_drone.vtol_transition(mavutil.mavlink.MAV_VTOL_STATE_FW, timeout_ack=2) is False
 
     mapping = plane_drone.mode_mapping()
     assert isinstance(mapping, dict)
