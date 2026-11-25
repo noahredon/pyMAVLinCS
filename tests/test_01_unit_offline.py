@@ -696,6 +696,195 @@ def test_land_vehicle_types_offline():
             mav.close()
 
 
+def test_takeoff_vehicle_types_offline():
+    """Tests takeoff() offline across Multirotor (GUIDED+NAV_TAKEOFF), VTOL/QuadPlane (GUIDED+NAV_TAKEOFF/goto), and Fixed-Wing (TKOFF_ALT/TKOFF_LVL_PITCH + TAKEOFF mode)."""
+    # 1. Invalid inputs
+    mav_inv = MAVLinCS(address="udpin:127.0.0.1:0", timeout_heartbeat=0, pos_rate=0, mavlogfile=None)
+    try:
+        assert mav_inv.takeoff(0.0) is False
+        assert mav_inv.takeoff(-5.0) is False
+        assert mav_inv.takeoff(math.nan) is False
+        assert mav_inv.takeoff(math.inf) is False
+        assert mav_inv.takeoff(10.0, pitch=math.nan) is False
+    finally:
+        mav_inv.close()
+
+    def run_takeoff_case(
+        mav_type: int,
+        vtol_state: int,
+        landed_state: int,
+        altitude: float,
+        pitch: float,
+        final_rel_alt: float,
+        accept_tkoff_alt: bool = True,
+        update_tkoff_params: bool = False,
+    ):
+        mav = MAVLinCS(address="udpin:127.0.0.1:0", timeout_heartbeat=0, pos_rate=0, mavlogfile=None)
+        try:
+            mav.master.target_system = 1
+            ap_mav = mavutil.mavlink.MAVLink(None, srcSystem=1, srcComponent=1)
+            recorded_cmds = []
+            recorded_params = {}
+            recorded_gotos = []
+
+            def inject(msg):
+                pkt = msg.pack(ap_mav)
+                decoded = mav.master.mav.decode(bytearray(pkt))
+                decoded._timestamp = time.time()
+                mav.master.post_message(decoded)
+                with mav.mavthread._lock:
+                    mav.mavthread._queue.append(decoded)
+                    mav.mavthread._msg_received.set()
+
+            def send_hb(custom_mode: int):
+                inject(ap_mav.heartbeat_encode(
+                    mav_type,
+                    mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA,
+                    mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED | mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED,
+                    custom_mode,
+                    mavutil.mavlink.MAV_STATE_ACTIVE,
+                ))
+
+            def send_gps(rel_alt_m: float):
+                inject(ap_mav.global_position_int_encode(
+                    1000, int(48.0 * 1e7), int(2.0 * 1e7), int(rel_alt_m * 1000), int(rel_alt_m * 1000), 0, 0, 0, 0
+                ))
+
+            # Initial heartbeat in STABILIZE (0 for Copter, 2 for Plane/VTOL) so mode switch is also verified
+            init_mode = 0 if mav_type == mavutil.mavlink.MAV_TYPE_QUADROTOR else 2
+            send_hb(init_mode)
+            send_gps(0.0 if landed_state == mavutil.mavlink.MAV_LANDED_STATE_ON_GROUND else 10.0)
+            inject(ap_mav.extended_sys_state_encode(vtol_state, landed_state))
+
+            def on_gcs_send(m):
+                mtype = m.get_type()
+                if mtype == "PARAM_SET":
+                    pid = (m.param_id.decode("ascii", errors="ignore") if isinstance(m.param_id, bytes) else str(m.param_id)).rstrip("\x00")
+                    recorded_params[pid] = m.param_value
+                    if pid == "TKOFF_ALT" and not accept_tkoff_alt:
+                        inject(ap_mav.param_value_encode(pid.encode("ascii"), 50.0, mavutil.mavlink.MAV_PARAM_TYPE_REAL32, 100, 0))
+                    else:
+                        inject(ap_mav.param_value_encode(pid.encode("ascii"), m.param_value, mavutil.mavlink.MAV_PARAM_TYPE_REAL32, 100, 0))
+                elif mtype == "SET_POSITION_TARGET_GLOBAL_INT":
+                    recorded_gotos.append(m.alt)
+                    send_gps(final_rel_alt)
+                elif mtype == "COMMAND_LONG":
+                    recorded_cmds.append((m.command, m.param1, m.param2, m.param7))
+                    if m.command == mavutil.mavlink.MAV_CMD_DO_SET_MODE:
+                        target_mode = int(m.param2)
+                        inject(ap_mav.command_ack_encode(
+                            m.command, mavutil.mavlink.MAV_RESULT_ACCEPTED, 0, 0,
+                            mav.master.source_system, mav.master.source_component,
+                        ))
+                        send_hb(target_mode)
+                        if target_mode == 13:  # ArduPlane TAKEOFF mode
+                            send_gps(final_rel_alt)
+                    elif m.command == mavutil.mavlink.MAV_CMD_NAV_TAKEOFF:
+                        inject(ap_mav.command_ack_encode(
+                            m.command, mavutil.mavlink.MAV_RESULT_ACCEPTED, 0, 0,
+                            mav.master.source_system, mav.master.source_component,
+                        ))
+                        send_gps(final_rel_alt)
+
+            mav.set_additional_send_callback(on_gcs_send)
+            ok = mav.takeoff(
+                altitude=altitude,
+                pitch=pitch,
+                precision=1.0,
+                timeout_ack=1.0,
+                timeout_set_mode=1.0,
+                timeout_takeoff=2.0,
+                update_tkoff_params=update_tkoff_params,
+            )
+            return ok, mav.mode(), recorded_cmds, recorded_params, recorded_gotos
+        finally:
+            mav.close()
+
+    # 2. Multirotor (ArduCopter reports MAV_VTOL_STATE_MC) on ground -> GUIDED + MAV_CMD_NAV_TAKEOFF
+    ok, mode, cmds, params, gotos = run_takeoff_case(
+        mavutil.mavlink.MAV_TYPE_QUADROTOR, mavutil.mavlink.MAV_VTOL_STATE_MC,
+        mavutil.mavlink.MAV_LANDED_STATE_ON_GROUND, altitude=12.0, pitch=0.0, final_rel_alt=12.0
+    )
+    assert ok is True and mode == "GUIDED" and params == {} and gotos == []
+    assert cmds == [
+        (mavutil.mavlink.MAV_CMD_DO_SET_MODE, float(mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED), 4.0, 0.0),
+        (mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0.0, 0.0, 12.0),
+    ]
+
+    # 3. VTOL QuadPlane (MAV_TYPE_VTOL_QUADROTOR) on ground -> GUIDED + MAV_CMD_NAV_TAKEOFF (pitch forced to 0)
+    ok, mode, cmds, params, gotos = run_takeoff_case(
+        mavutil.mavlink.MAV_TYPE_VTOL_QUADROTOR, mavutil.mavlink.MAV_VTOL_STATE_MC,
+        mavutil.mavlink.MAV_LANDED_STATE_ON_GROUND, altitude=20.0, pitch=15.0, final_rel_alt=20.0
+    )
+    assert ok is True and mode == "GUIDED" and params == {} and gotos == []
+    assert cmds == [
+        (mavutil.mavlink.MAV_CMD_DO_SET_MODE, float(mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED), 15.0, 0.0),
+        (mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0.0, 0.0, 20.0),
+    ]
+
+    # 4. QuadPlane reporting MAV_TYPE_FIXED_WING (Q_MAV_TYPE=0) + vtol_state=MC -> detected as VTOL -> GUIDED + NAV_TAKEOFF
+    ok, mode, cmds, params, gotos = run_takeoff_case(
+        mavutil.mavlink.MAV_TYPE_FIXED_WING, mavutil.mavlink.MAV_VTOL_STATE_MC,
+        mavutil.mavlink.MAV_LANDED_STATE_ON_GROUND, altitude=25.0, pitch=0.0, final_rel_alt=25.0
+    )
+    assert ok is True and mode == "GUIDED" and params == {} and gotos == []
+    assert cmds == [
+        (mavutil.mavlink.MAV_CMD_DO_SET_MODE, float(mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED), 15.0, 0.0),
+        (mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0.0, 0.0, 25.0),
+    ]
+
+    # 5. VTOL already airborne -> GUIDED + SET_POSITION_TARGET_GLOBAL_INT (no NAV_TAKEOFF)
+    ok, mode, cmds, params, gotos = run_takeoff_case(
+        mavutil.mavlink.MAV_TYPE_VTOL_QUADROTOR, mavutil.mavlink.MAV_VTOL_STATE_MC,
+        mavutil.mavlink.MAV_LANDED_STATE_IN_AIR, altitude=30.0, pitch=0.0, final_rel_alt=30.0
+    )
+    assert ok is True and mode == "GUIDED" and gotos == [30.0]
+    assert cmds == [
+        (mavutil.mavlink.MAV_CMD_DO_SET_MODE, float(mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED), 15.0, 0.0),
+    ]
+
+    # 6. Pure Fixed-Wing default (update_tkoff_params=False) -> does NOT modify TKOFF_ALT / TKOFF_LVL_PITCH, enters TAKEOFF mode
+    ok, mode, cmds, params, gotos = run_takeoff_case(
+        mavutil.mavlink.MAV_TYPE_FIXED_WING, mavutil.mavlink.MAV_VTOL_STATE_UNDEFINED,
+        mavutil.mavlink.MAV_LANDED_STATE_ON_GROUND, altitude=40.0, pitch=15.0, final_rel_alt=42.0
+    )
+    assert ok is True and mode == "TAKEOFF" and gotos == [] and params == {}
+    assert cmds == [
+        (mavutil.mavlink.MAV_CMD_DO_SET_MODE, float(mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED), 13.0, 0.0),
+    ]
+
+    # 7. Pure Fixed-Wing with update_tkoff_params=True & pitch=15 -> writes TKOFF_ALT & TKOFF_LVL_PITCH, enters TAKEOFF mode
+    ok, mode, cmds, params, gotos = run_takeoff_case(
+        mavutil.mavlink.MAV_TYPE_FIXED_WING, mavutil.mavlink.MAV_VTOL_STATE_UNDEFINED,
+        mavutil.mavlink.MAV_LANDED_STATE_ON_GROUND, altitude=40.0, pitch=15.0, final_rel_alt=42.0,
+        update_tkoff_params=True
+    )
+    assert ok is True and mode == "TAKEOFF" and gotos == []
+    assert params == {"TKOFF_ALT": 40.0, "TKOFF_LVL_PITCH": 15.0}
+
+    # 8. Pure Fixed-Wing with update_tkoff_params=True & pitch=0 -> writes only TKOFF_ALT (preserves autopilot TKOFF_LVL_PITCH)
+    ok, mode, cmds, params, gotos = run_takeoff_case(
+        mavutil.mavlink.MAV_TYPE_FIXED_WING, mavutil.mavlink.MAV_VTOL_STATE_UNDEFINED,
+        mavutil.mavlink.MAV_LANDED_STATE_ON_GROUND, altitude=35.0, pitch=0.0, final_rel_alt=35.0,
+        update_tkoff_params=True
+    )
+    assert ok is True and mode == "TAKEOFF" and params == {"TKOFF_ALT": 35.0}
+
+    # 9. Pure Fixed-Wing with update_tkoff_params=True and negative pitch or refused TKOFF_ALT -> returns False
+    ok, _, _, _, _ = run_takeoff_case(
+        mavutil.mavlink.MAV_TYPE_FIXED_WING, mavutil.mavlink.MAV_VTOL_STATE_UNDEFINED,
+        mavutil.mavlink.MAV_LANDED_STATE_ON_GROUND, altitude=40.0, pitch=-5.0, final_rel_alt=40.0,
+        update_tkoff_params=True
+    )
+    assert ok is False
+    ok, _, _, _, _ = run_takeoff_case(
+        mavutil.mavlink.MAV_TYPE_FIXED_WING, mavutil.mavlink.MAV_VTOL_STATE_UNDEFINED,
+        mavutil.mavlink.MAV_LANDED_STATE_ON_GROUND, altitude=40.0, pitch=15.0, final_rel_alt=40.0,
+        accept_tkoff_alt=False, update_tkoff_params=True
+    )
+    assert ok is False
+
+
 def test_safety_guards_and_invalid_inputs(drone):
     # PWM out of bounds [1000, 2000]
     assert drone.set_servo(servo_channel=9, pwm=950) is False

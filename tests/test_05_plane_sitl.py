@@ -109,6 +109,20 @@ def test_plane_telemetry_and_modes(plane_drone):
         assert plane_drone.mode() == target_mode
 
 
+def test_plane_takeoff_from_ground(plane_drone):
+    """Tests Fixed-Wing runway takeoff via arm() + takeoff() using the autopilot's configured TKOFF_ALT/TKOFF_LVL_PITCH."""
+    initial_tkoff_alt = plane_drone.get_parameter("TKOFF_ALT", timeout=2.0)
+    assert plane_drone.arm(timeout_arming=10) is True
+    assert plane_drone.motors_armed() is True
+
+    # Default update_tkoff_params=False: uses existing TKOFF_ALT (50m) without modifying autopilot parameters
+    assert plane_drone.takeoff(altitude=35.0, precision=2.0, timeout_ack=3, timeout_set_mode=5, timeout_takeoff=45) is True
+    assert plane_drone.mode() == "TAKEOFF"
+    assert plane_drone.position_gps().relative_alt >= 33.0
+    assert plane_drone.airspeed() > 8.0
+    assert math.isclose(plane_drone.get_parameter("TKOFF_ALT", timeout=2.0), initial_tkoff_alt, rel_tol=1e-5)
+
+
 def test_plane_auto_takeoff_mission_and_guided_flight(plane_drone):
     """Uploads and executes a Fixed-Wing AUTO mission, then tests do_reposition, change_speed, do_return_path_start, do_land_start, do_go_around, and RTL."""
     gps0 = plane_drone.position_gps()

@@ -2450,29 +2450,68 @@ class MAVLinCS:
                 self.logger.error("Reposition command failed or denied")
             return bool(accepted)
 
+    def _is_vtol_and_fixed_wing(self, target_system: int) -> tuple[bool, bool]:
+        """Detects whether the target vehicle is a VTOL/QuadPlane or a pure Fixed-Wing."""
+        vtype = self.vehicle_type_int(source_system=target_system)
+        ext_state = self.get_msg(msg_type="EXTENDED_SYS_STATE", source_system=target_system)
+        has_vtol_state = bool(
+            ext_state is not None
+            and getattr(ext_state, "vtol_state", mavutil.mavlink.MAV_VTOL_STATE_UNDEFINED)
+            != mavutil.mavlink.MAV_VTOL_STATE_UNDEFINED
+        )
+        is_vtol = (vtype in self._VTOL_MAV_TYPES) or (
+            vtype == mavutil.mavlink.MAV_TYPE_FIXED_WING and has_vtol_state
+        )
+        is_fixed_wing = (vtype == mavutil.mavlink.MAV_TYPE_FIXED_WING) and not is_vtol
+        return is_vtol, is_fixed_wing
+
     def takeoff(self,
             altitude: float,
             pitch: float = 0,
             target_system: int|None = None,
             **kwargs
         ) -> bool:
-        """Perform a takeoff. Make sure to arm the drone beforehand.
+        """Perform an automated takeoff. Make sure to arm the vehicle beforehand.
+
+        Automatically adapts the takeoff strategy on ArduPilot to the vehicle type:
+
+        - **Multirotors / VTOL / QuadPlane (ArduPilot)**: Takeoff in ``GUIDED`` mode
+          (vertical takeoff; if already airborne, updates target altitude).
+        - **Fixed-Wing (ArduPlane)**: Switches to ``TAKEOFF`` flight mode
+          (using the autopilot's configured ``TKOFF_ALT``, ``TKOFF_LVL_PITCH``, and ``TKOFF_DIST`` parameters by default).
 
         Args:
-            altitude (float): Takeoff altitude.
-            pitch (float): Enforced pitch.
+            altitude (float): Target takeoff altitude relative to HOME (m). Must be strictly positive.
+            pitch (float): Minimum takeoff pitch angle (deg). Ignored on VTOL vertical takeoff, and only written to ``TKOFF_LVL_PITCH`` on Fixed-Wing if ``update_tkoff_params=True`` and ``pitch > 0``. Default: 0.
             target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
             **precision (float): Required altitude precision in meters to consider the takeoff successful. Default: 1.
-            **timeout_ack (float|None): Timeout while waiting for the ack. 0 means no waiting (returns False). None means no timeout. Default: 2.
-            **timeout_takeoff (float|None): Timeout while waiting for the takeoff to complete. 0 means no waiting (returns the ack result as bool). None means no timeout. Default: None.
+            **timeout_ack (float|None): Timeout while waiting for command/parameter ACKs. 0 means no waiting (returns False). None means no timeout. Default: 2.
+            **timeout_set_mode (float|None): Timeout while waiting for the mode change. Default: 4.
+            **timeout_takeoff (float|None): Timeout while waiting for the takeoff to complete. 0 means no waiting (returns the ack/mode result as bool). None means no timeout. Default: None.
+            **update_tkoff_params (bool): Fixed-Wing (ArduPlane) only. If True, overwrites ``TKOFF_ALT`` (and ``TKOFF_LVL_PITCH`` when ``pitch > 0``) on the autopilot before entering ``TAKEOFF`` mode. Default: False (does not modify autopilot parameters).
 
         Returns:
             bool: Takeoff result.
+
+        Note:
+            - On Fixed-Wing (ArduPlane), ``TAKEOFF`` mode climbs at ``TKOFF_LVL_PITCH`` to ``TKOFF_ALT`` and then
+              loiters at ``TKOFF_DIST`` meters ahead of the takeoff point. By default (``update_tkoff_params=False``),
+              ``takeoff()`` does **not** modify these parameters on the flight controller: make sure ``altitude`` does
+              not exceed the aircraft's configured ``TKOFF_ALT`` (ArduPlane default: 50 m), otherwise waiting for
+              ``altitude`` will time out once the aircraft levels off at ``TKOFF_ALT``. Pass
+              ``update_tkoff_params=True`` if you explicitly want ``takeoff()`` to write ``TKOFF_ALT`` / ``TKOFF_LVL_PITCH``
+              (note that ArduPilot persists parameter writes to EEPROM).
+            - On Fixed-Wing (ArduPlane), make sure the aircraft is armed before calling ``takeoff()``
+              (or arm right after if calling with ``timeout_takeoff=0``).
+            - On VTOL / QuadPlane (ArduPlane), vertical takeoff in ``GUIDED`` mode requires the vehicle to be
+              armed beforehand; ``pitch`` is ignored during vertical VTOL climb.
         """
         self.logger.debug("Starting takeoff..")
         precision = kwargs.get('precision', 1)
         timeout_ack = kwargs.get('timeout_ack', 2)
+        timeout_set_mode = kwargs.get('timeout_set_mode', 4)
         timeout_takeoff = kwargs.get('timeout_takeoff', None)
+        update_tkoff_params = kwargs.get('update_tkoff_params', False)
         if self.mission_ended:
             self.logger.critical("Mission stopped: Unable to takeoff")
             return False
@@ -2481,6 +2520,12 @@ class MAVLinCS:
             return False
         if self.master is None:
             self.logger.error("Master object is not defined!")
+            return False
+        if not math.isfinite(altitude) or altitude <= 0:
+            self.logger.error("Invalid takeoff altitude: %s (must be > 0)", altitude)
+            return False
+        if not math.isfinite(pitch):
+            self.logger.error("Invalid takeoff pitch: %s", pitch)
             return False
 
         if target_system is None:
@@ -2491,76 +2536,143 @@ class MAVLinCS:
             self.logger.error("No position received: impossible to takeoff with safety")
             return False
 
-        # Find the correct flight mode
-        if self.autopilot_int(source_system=target_system) == mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA:
-            if self.mode(source_system=target_system) != "GUIDED":
-                self.logger.warning("Mode %s != GUIDED", self.mode(source_system=target_system))
+        is_ardupilot = (self.autopilot_int(source_system=target_system) == mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA)
+        is_vtol, is_fixed_wing = self._is_vtol_and_fixed_wing(target_system)
+
+        goto_sent = False
+
+        if is_ardupilot and is_fixed_wing:
+            if update_tkoff_params:
+                if pitch < 0:
+                    self.logger.error("Invalid Fixed-Wing takeoff pitch: %s (must be >= 0)", pitch)
+                    return False
+
+                if not self.write_parameter(
+                    parameter="TKOFF_ALT",
+                    value=float(altitude),
+                    target_system=target_system,
+                    timeout_ack=timeout_ack
+                ):
+                    self.logger.error("Failed to set TKOFF_ALT parameter: takeoff aborted")
+                    return False
+
+                if pitch > 0:
+                    if not self.write_parameter(
+                        parameter="TKOFF_LVL_PITCH",
+                        value=float(pitch),
+                        target_system=target_system,
+                        timeout_ack=timeout_ack
+                    ):
+                        self.logger.error("Failed to set TKOFF_LVL_PITCH parameter: takeoff aborted")
+                        return False
+            elif pitch != 0:
+                self.logger.warning(
+                    "Fixed-Wing takeoff uses the autopilot's configured TKOFF_ALT and TKOFF_LVL_PITCH "
+                    "(pitch=%s not written; pass update_tkoff_params=True to overwrite them)",
+                    pitch,
+                )
+
+            # ArduPlane fixed-wing rejects COMMAND_LONG(MAV_CMD_NAV_TAKEOFF); use TAKEOFF mode
+            expected_mode = "TAKEOFF"
+            if self.mode(source_system=target_system) != expected_mode:
+                self.logger.info("Switching to TAKEOFF mode for Fixed-Wing takeoff..")
                 mod_changed = self.set_mode(
-                    mode="GUIDED",
-                    target_system=target_system
+                    mode=expected_mode,
+                    target_system=target_system,
+                    timeout_ack=timeout_ack,
+                    timeout_set_mode=timeout_set_mode
                 )
                 if not mod_changed:
                     self.logger.critical("Takeoff aborted")
                     return False
-        else:
-            self.logger.info("No mode check: device is not running ArduPilot")
 
-        goto_sent = False
-
-        m = self.get_msg(
-            msg_type="EXTENDED_SYS_STATE",
-            source_system=target_system
-        )
-        if pitch==0 and m and (m.landed_state == mavutil.mavlink.MAV_LANDED_STATE_IN_AIR or m.landed_state == mavutil.mavlink.MAV_LANDED_STATE_TAKEOFF):  # If already airborne or taking off
-            # pitch==0 because we send an upward goto
-            self.logger.info("Vehicle already in the air: sending goto request instead of normal takeoff..")
-            current_lat, current_lon, _, _ = self.position_gps(source_system=target_system)
-            self.master.mav.set_position_target_global_int_send(
-                self.time_boot_ms, # time_boot_ms
-                target_system, # target_system
-                mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1, # target_component
-                mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT, # coordinate_frame
-                0b110111111000, # type_mask
-                int(current_lat * 1e7), # lat_int
-                int(current_lon * 1e7), # lon_int
-                altitude, # relative_alt
-                0,0,0, # vx, vy, vz
-                0,0,0, # afx, afy, afz
-                0,0 # yaw, yaw_rate
-            )
             goto_sent = True
-
         else:
-            self.logger.info("Sending takeoff request to %s: (alt, pitch): (%s, %s)..", target_system, altitude, pitch)
-            self.master.mav.command_long_send(
-                target_system, # target_system
-                mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1, # target_component
-                mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, # command
-                1, # confirmation
-                pitch, # param1 (Pitch)
-                0,0, # params2-3 (unused)
-                0, #param4 (Yaw)
-                0, # param5 (Latitude)
-                0, # param6 (Longitude)
-                altitude # param7 (Altitude)
+            expected_mode = "GUIDED"
+            # Find the correct flight mode
+            if is_ardupilot:
+                if is_vtol and pitch != 0:
+                    self.logger.warning("Pitch parameter (%s) is ignored for VTOL vertical takeoff", pitch)
+                if self.mode(source_system=target_system) != expected_mode:
+                    self.logger.warning("Mode %s != GUIDED", self.mode(source_system=target_system))
+                    mod_changed = self.set_mode(
+                        mode=expected_mode,
+                        target_system=target_system,
+                        timeout_ack=timeout_ack,
+                        timeout_set_mode=timeout_set_mode
+                    )
+                    if not mod_changed:
+                        self.logger.critical("Takeoff aborted")
+                        return False
+            else:
+                self.logger.info("No mode check: device is not running ArduPilot")
+
+            m = self.get_msg(
+                msg_type="EXTENDED_SYS_STATE",
+                source_system=target_system
             )
-            accepted = self.wait_command_ack(
-                command=mavutil.mavlink.MAV_CMD_NAV_TAKEOFF,
-                source_system=target_system,
-                timeout=timeout_ack
+            already_airborne = bool(
+                m and (
+                    m.landed_state == mavutil.mavlink.MAV_LANDED_STATE_IN_AIR
+                    or m.landed_state == mavutil.mavlink.MAV_LANDED_STATE_TAKEOFF
+                )
             )
-            if accepted is None: # End of mission or Timeout
-                if self.mission_ended:
-                    self.logger.critical("End of mission")
-                else:
-                    self.logger.critical("Takeoff failed: ack timeout")
-                return False
-            elif not accepted: # Refused
-                self.logger.error("Takeoff failed: refused")
-                return False
+            if already_airborne and (is_vtol or pitch == 0):
+                # Send an upward goto when already airborne (vertical climb on Copter / VTOL)
+                self.logger.info("Vehicle already in the air: sending goto request instead of normal takeoff..")
+                current_lat, current_lon, _, _ = self.position_gps(source_system=target_system)
+                self.master.mav.set_position_target_global_int_send(
+                    self.time_boot_ms, # time_boot_ms
+                    target_system, # target_system
+                    mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1, # target_component
+                    mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT, # coordinate_frame
+                    0b110111111000, # type_mask
+                    int(current_lat * 1e7), # lat_int
+                    int(current_lon * 1e7), # lon_int
+                    altitude, # relative_alt
+                    0,0,0, # vx, vy, vz
+                    0,0,0, # afx, afy, afz
+                    0,0 # yaw, yaw_rate
+                )
+                goto_sent = True
+
+            else:
+                effective_pitch = 0 if (is_ardupilot and is_vtol) else pitch
+                self.logger.info("Sending takeoff request to %s: (alt, pitch): (%s, %s)..", target_system, altitude, effective_pitch)
+                self.master.mav.command_long_send(
+                    target_system, # target_system
+                    mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1, # target_component
+                    mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, # command
+                    1, # confirmation
+                    effective_pitch, # param1 (Pitch)
+                    0,0, # params2-3 (unused)
+                    0, #param4 (Yaw)
+                    0, # param5 (Latitude)
+                    0, # param6 (Longitude)
+                    altitude # param7 (Altitude)
+                )
+                accepted = self.wait_command_ack(
+                    command=mavutil.mavlink.MAV_CMD_NAV_TAKEOFF,
+                    source_system=target_system,
+                    timeout=timeout_ack
+                )
+                if accepted is None: # End of mission or Timeout
+                    if self.mission_ended:
+                        self.logger.critical("End of mission")
+                    else:
+                        self.logger.critical("Takeoff failed: ack timeout")
+                    return False
+                elif not accepted: # Refused
+                    self.logger.error("Takeoff failed: refused")
+                    return False
+
+        def _altitude_reached(rel_alt: float) -> bool:
+            if is_ardupilot and is_fixed_wing:
+                return rel_alt >= altitude - precision
+            return abs(rel_alt - altitude) < precision
 
         _, _, relative_alt, _ = self.position_gps(source_system=target_system)
-        if abs(relative_alt - altitude) < precision:
+        if _altitude_reached(relative_alt):
             self.logger.info("Takeoff succeeded")
             return True
 
@@ -2576,18 +2688,18 @@ class MAVLinCS:
                 return False
 
             _, _, relative_alt, _ = self.position_gps(source_system=target_system)
-            if abs(relative_alt - altitude) < precision:
+            if _altitude_reached(relative_alt):
                 self.logger.info("Altitude reached: stopping wait for takeoff completion")
                 return True
 
-            if not goto_sent:
+            if not goto_sent and not is_vtol:
                 if not self.mission_ended and self.allow_actions:
                     m = self.get_msg(
                         msg_type="EXTENDED_SYS_STATE",
                         source_system=target_system
                     )
                     # pitch==0 means that you want to takeoff vertically, MAV_LANDED_STATE_IN_AIR means takeoff is complete
-                    if pitch==0 and m and m.landed_state == mavutil.mavlink.MAV_LANDED_STATE_IN_AIR:
+                    if pitch == 0 and m and m.landed_state == mavutil.mavlink.MAV_LANDED_STATE_IN_AIR:
                         self.logger.info("Sending goto repositioning request to %s. alt: %s..", target_system, altitude)
                         current_lat, current_lon, _, _ = self.position_gps(source_system=target_system)
                         self.master.mav.set_position_target_global_int_send(
@@ -2609,8 +2721,8 @@ class MAVLinCS:
                 self.logger.critical("Timeout: stopping wait for takeoff completion")
                 return False
 
-            if self.autopilot_int(source_system=target_system) == mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA:
-                if self.mode(source_system=target_system) != "GUIDED":
+            if is_ardupilot:
+                if self.mode(source_system=target_system) != expected_mode:
                     self.logger.warning("Mode changed: stopping wait for takeoff completion")
                     return False
 
@@ -2671,17 +2783,7 @@ class MAVLinCS:
             self.logger.error("Landing not implemented outside ArduPilot")
             return False
 
-        vtype = self.vehicle_type_int(source_system=target_system)
-        ext_state = self.get_msg(msg_type="EXTENDED_SYS_STATE", source_system=target_system)
-        has_vtol_state = bool(
-            ext_state is not None
-            and getattr(ext_state, "vtol_state", mavutil.mavlink.MAV_VTOL_STATE_UNDEFINED)
-            != mavutil.mavlink.MAV_VTOL_STATE_UNDEFINED
-        )
-        is_vtol = (vtype in self._VTOL_MAV_TYPES) or (
-            vtype == mavutil.mavlink.MAV_TYPE_FIXED_WING and has_vtol_state
-        )
-        is_fixed_wing = (vtype == mavutil.mavlink.MAV_TYPE_FIXED_WING) and not is_vtol
+        is_vtol, is_fixed_wing = self._is_vtol_and_fixed_wing(target_system)
 
         if is_vtol:
             expected_mode = "QLAND"

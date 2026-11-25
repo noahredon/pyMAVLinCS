@@ -41,31 +41,26 @@ def main():
                 print(f"Current WP_LOITER_RAD: {loiter_rad:.1f}m")
                 plane.write_parameter("WP_LOITER_RAD", 60.0, timeout_ack=2.0)
 
-            # 3. Take off without a mission using ArduPlane's dedicated TAKEOFF mode
-            print("\nSwitching to TAKEOFF mode and arming...")
-            if not plane.set_mode("TAKEOFF", timeout_ack=3, timeout_set_mode=4):
-                print("Failed to switch to TAKEOFF mode.")
-                return
-
+            # 3. Take off without a mission using takeoff() (enters TAKEOFF mode using autopilot's TKOFF_ALT / TKOFF_LVL_PITCH)
+            print("\nArming and taking off until 40m via takeoff()...")
             if not plane.arm(timeout_arming=10):
                 print("Failed to arm ArduPlane.")
                 return
 
-            print("Climbing out in TAKEOFF mode until relative altitude >= 40m...")
-            start_t = time.time()
-            while time.time() - start_t < 60:
-                pos = plane.position_gps()
-                print(
-                    f"  Alt: {pos.relative_alt:.1f}m | "
-                    f"Airspeed: {plane.airspeed():.1f}m/s | "
-                    f"Groundspeed: {plane.groundspeed():.1f}m/s | "
-                    f"Climb: {plane.climb_rate():+.1f}m/s | "
-                    f"Hdg: {plane.heading()}° | "
-                    f"Thr: {plane.throttle()}%"
-                )
-                if pos.relative_alt >= 40.0:
-                    break
-                time.sleep(1.5)
+            # Note: by default, takeoff() does not overwrite TKOFF_ALT / TKOFF_LVL_PITCH (ArduPlane default TKOFF_ALT=50m)
+            if not plane.takeoff(altitude=40.0, precision=2.0, timeout_takeoff=60):
+                print("Fixed-wing takeoff failed.")
+                return
+
+            pos = plane.position_gps()
+            print(
+                f"  Takeoff complete! Alt: {pos.relative_alt:.1f}m | "
+                f"Airspeed: {plane.airspeed():.1f}m/s | "
+                f"Groundspeed: {plane.groundspeed():.1f}m/s | "
+                f"Climb: {plane.climb_rate():+.1f}m/s | "
+                f"Hdg: {plane.heading()}° | "
+                f"Thr: {plane.throttle()}%"
+            )
 
             # 4. Switch to LOITER mode to circle around current position
             print("\nSwitching to LOITER mode for 5 seconds...")
