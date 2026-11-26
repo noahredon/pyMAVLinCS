@@ -1499,6 +1499,123 @@ def test_set_current_waypoint_offline():
         mav.close()
 
 
+def test_rally_points_and_geofence_offline():
+    """Tests upload_rally_points(), download_rally_points(), upload_geofence(), and download_geofence() offline."""
+    mav = MAVLinCS(address="udpin:127.0.0.1:0", timeout_heartbeat=0, pos_rate=0, mavlogfile=None)
+    try:
+        mav.master.target_system = 1
+
+        # 1. Validation edge cases
+        assert mav.upload_rally_points([]) is False
+        assert mav.upload_rally_points([(48.0, 2.0)]) is False  # Bad tuple length
+        assert mav.upload_rally_points([MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=48.0, y=2.0, z=50.0)]) is False
+        assert mav.upload_rally_points([(48.0, 2.0, 50.0, mavutil.mavlink.MAV_FRAME_LOCAL_NED)]) is False
+
+        assert mav.upload_geofence([]) is False
+        assert mav.upload_geofence([{"lat": 48.0, "lon": 2.0}]) is False  # Missing command
+        assert mav.upload_geofence([MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=48.0, y=2.0, z=0.0)]) is False
+        assert mav.upload_geofence([
+            MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION, param1=2, x=48.0, y=2.0, z=0.0)
+        ]) is False  # < 3 vertices
+        assert mav.upload_geofence([
+            MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_FENCE_CIRCLE_EXCLUSION, param1=0.0, x=48.0, y=2.0, z=0.0)
+        ]) is False  # radius <= 0
+        assert mav.upload_geofence([
+            MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_FENCE_RETURN_POINT, frame=mavutil.mavlink.MAV_FRAME_LOCAL_NED, x=0.0, y=0.0, z=0.0)
+        ]) is False  # Non-global frame
+
+        # 2. Simulate full MAVLink 2 mission/fence/rally storage on autopilot
+        ap_mav = mavutil.mavlink.MAVLink(None, srcSystem=1, srcComponent=1)
+        storage: dict[int, list] = {
+            mavutil.mavlink.MAV_MISSION_TYPE_FENCE: [],
+            mavutil.mavlink.MAV_MISSION_TYPE_RALLY: [],
+        }
+        expected_count: dict[int, int] = {}
+
+        def push(msg):
+            msg.pack(ap_mav)
+            msg._timestamp = time.time()
+            with mav.mavthread._lock:
+                mav.mavthread._queue.append(msg)
+                mav.mavthread._msg_received.set()
+
+        def on_send(m):
+            mtype = m.get_type()
+            mt = getattr(m, "mission_type", mavutil.mavlink.MAV_MISSION_TYPE_MISSION)
+            if mtype == "MISSION_CLEAR_ALL":
+                storage[mt] = []
+                push(ap_mav.mission_ack_encode(
+                    mav.master.source_system, mav.master.source_component,
+                    mavutil.mavlink.MAV_MISSION_ACCEPTED, mission_type=mt,
+                ))
+            elif mtype == "MISSION_COUNT":
+                expected_count[mt] = m.count
+                storage[mt] = []
+                if m.count > 0:
+                    push(ap_mav.mission_request_int_encode(
+                        mav.master.source_system, mav.master.source_component, 0, mission_type=mt,
+                    ))
+                else:
+                    push(ap_mav.mission_ack_encode(
+                        mav.master.source_system, mav.master.source_component,
+                        mavutil.mavlink.MAV_MISSION_ACCEPTED, mission_type=mt,
+                    ))
+            elif mtype == "MISSION_ITEM_INT":
+                storage[mt].append(m)
+                if m.seq + 1 < expected_count[mt]:
+                    push(ap_mav.mission_request_int_encode(
+                        mav.master.source_system, mav.master.source_component, m.seq + 1, mission_type=mt,
+                    ))
+                else:
+                    push(ap_mav.mission_ack_encode(
+                        mav.master.source_system, mav.master.source_component,
+                        mavutil.mavlink.MAV_MISSION_ACCEPTED, mission_type=mt,
+                    ))
+            elif mtype == "MISSION_REQUEST_LIST":
+                push(ap_mav.mission_count_encode(
+                    mav.master.source_system, mav.master.source_component, len(storage.get(mt, [])), mission_type=mt,
+                ))
+            elif mtype == "MISSION_REQUEST_INT":
+                stored = storage[mt][m.seq]
+                push(ap_mav.mission_item_int_encode(
+                    mav.master.source_system, mav.master.source_component, m.seq,
+                    stored.frame, stored.command, 0, 1,
+                    stored.param1, stored.param2, stored.param3, stored.param4,
+                    stored.x, stored.y, stored.z, mission_type=mt,
+                ))
+
+        mav.set_additional_send_callback(on_send)
+
+        # 3. Upload & download Rally Points (tuple + dict + MissionItem)
+        rally_in = [
+            (48.1, 2.1, 60.0),
+            {"lat": 48.2, "lon": 2.2, "alt": 75.0},
+            MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_RALLY_POINT, x=48.3, y=2.3, z=80.0),
+        ]
+        assert mav.upload_rally_points(rally_in, clear_existing=True, timeout=5.0) is True
+        rally_out = mav.download_rally_points(timeout=5.0)
+        assert rally_out is not None and len(rally_out) == 3
+        assert all(r.command == mavutil.mavlink.MAV_CMD_NAV_RALLY_POINT for r in rally_out)
+        assert math.isclose(rally_out[0].x, 48.1, abs_tol=1e-6) and math.isclose(rally_out[2].z, 80.0, rel_tol=1e-5)
+
+        # 4. Upload & download Geofence (polygon inclusion + exclusion circle + return point)
+        fence_in = [
+            MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_FENCE_RETURN_POINT, x=48.0, y=2.0, z=0.0),
+            MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION, param1=3, x=48.01, y=2.01, z=0.0),
+            MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION, param1=3, x=48.01, y=2.02, z=0.0),
+            MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION, param1=3, x=48.02, y=2.015, z=0.0),
+            {"command": mavutil.mavlink.MAV_CMD_NAV_FENCE_CIRCLE_EXCLUSION, "param1": 45.0, "lat": 48.012, "lon": 2.015},
+        ]
+        assert mav.upload_geofence(fence_in, clear_existing=True, timeout=5.0) is True
+        fence_out = mav.download_geofence(timeout=5.0)
+        assert fence_out is not None and len(fence_out) == 5
+        assert fence_out[0].command == mavutil.mavlink.MAV_CMD_NAV_FENCE_RETURN_POINT
+        assert fence_out[4].command == mavutil.mavlink.MAV_CMD_NAV_FENCE_CIRCLE_EXCLUSION
+        assert math.isclose(fence_out[4].param1, 45.0, rel_tol=1e-5)
+    finally:
+        mav.close()
+
+
 def test_safety_guards_and_invalid_inputs(drone):
     # PWM out of bounds [1000, 2000]
     assert drone.set_servo(servo_channel=9, pwm=950) is False
@@ -1559,6 +1676,8 @@ def test_safety_guards_and_invalid_inputs(drone):
     assert drone.send_waypoint(0) is False
     assert drone.clear_waypoints() is False
     assert drone.upload_mission([(16, 0.0, 0.0, 10.0)]) is False
+    assert drone.upload_rally_points([(48.0, 2.0, 50.0)]) is False
+    assert drone.upload_geofence([(mavutil.mavlink.MAV_CMD_NAV_FENCE_RETURN_POINT, 48.0, 2.0, 0.0)]) is False
     assert drone.start_mission() is False
     assert drone.set_current_waypoint(1) is False
     assert drone.reboot() is False
@@ -1588,6 +1707,8 @@ def test_safety_guards_and_invalid_inputs(drone):
     assert math.isnan(drone.request_home_position().latitude_home)
     assert math.isnan(drone.get_parameter("SYSID_MYGCS"))
     assert drone.download_mission() is None
+    assert drone.download_rally_points() is None
+    assert drone.download_geofence() is None
     assert drone.send_timesync() is False
     assert drone.send_statustext("Should fail") is False
     assert drone.send_named_value_int(1, "TEST") is False

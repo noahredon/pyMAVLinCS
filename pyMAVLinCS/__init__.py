@@ -3291,9 +3291,10 @@ class MAVLinCS:
             x: float = 0.0,
             y: float = 0.0,
             z: float = 0.0,
-            target_system: int|None = None
+            target_system: int|None = None,
+            mission_type: int = mavutil.mavlink.MAV_MISSION_TYPE_MISSION
         ) -> bool:
-        """Send a waypoint.
+        """Send a waypoint (or fence/rally item).
 
         Args:
             waypoint_index (int): Waypoint ID (sequence number). Starts at zero. Must increment for each waypoint with no gaps (0,1,2,3,4).
@@ -3307,6 +3308,7 @@ class MAVLinCS:
             y (float): Local: y position in meters, Global: longitude in degrees.
             z (float): Global: altitude in meters (relative or absolute, depending on the frame).
             target_system (int): Target MAVLink system ID. Defaults to the master's ID.
+            mission_type (int): MAV_MISSION_TYPE. Default: MAV_MISSION_TYPE_MISSION.
 
         Returns:
             bool: True if the command was sent, False otherwise.
@@ -3360,21 +3362,24 @@ class MAVLinCS:
             param4, # param4
             int(x), # x
             int(y), # y
-            z # z
+            z, # z
+            mission_type=mission_type
         )
         self.logger.info("Waypoint sent")
         return True
 
     def send_waypoint_count(self,
             number_waypoints: int,
-            target_system: int|None = None
+            target_system: int|None = None,
+            mission_type: int = mavutil.mavlink.MAV_MISSION_TYPE_MISSION
         ) -> bool:
-        """Inform the flight controller of the number of waypoints that will be sent.
+        """Inform the flight controller of the number of mission/fence/rally items that will be sent.
         Must be sent before each mission.
 
         Args:
             number_waypoints (int): Number of waypoints.
             target_system (int): Target MAVLink system ID.
+            mission_type (int): MAV_MISSION_TYPE. Default: MAV_MISSION_TYPE_MISSION.
 
         Returns:
             bool: True if the command was sent, False otherwise.
@@ -3395,19 +3400,22 @@ class MAVLinCS:
         self.master.mav.mission_count_send(
             target_system, # target_system
             mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1, # target_component
-            number_waypoints # count
+            number_waypoints, # count
+            mission_type # mission_type
         )
         self.logger.info("Waypoint count sent")
         return True
 
     def clear_waypoints(self,
             target_system: int|None = None,
+            mission_type: int = mavutil.mavlink.MAV_MISSION_TYPE_MISSION,
             **kwargs
         ) -> bool:
-        """Delete all waypoints.
+        """Delete all stored items of a given mission type (mission, geofence, or rally points).
 
         Args:
             target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
+            mission_type (int): MAV_MISSION_TYPE. Default: MAV_MISSION_TYPE_MISSION.
             **timeout (float|None): Timeout while waiting for the ack. Default: 2.
 
         Returns:
@@ -3429,11 +3437,12 @@ class MAVLinCS:
             target_system = self.master.target_system
         self.master.mav.mission_clear_all_send(
             target_system, # target_system
-            mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1 # target_component
+            mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1, # target_component
+            mission_type # mission_type
         )
 
         accepted = self.wait_mission_ack(
-            mission_type=mavutil.mavlink.MAV_MISSION_TYPE_MISSION,
+            mission_type=mission_type,
             source_system=target_system,
             timeout=timeout
         )
@@ -3452,17 +3461,19 @@ class MAVLinCS:
             waypoints: list[mavtypes.MissionItem|dict|tuple],
             clear_existing: bool = True,
             target_system: int|None = None,
+            mission_type: int = mavutil.mavlink.MAV_MISSION_TYPE_MISSION,
             **kwargs
         ) -> bool:
-        """Uploads a complete waypoint mission using the MAVLink Mission Protocol handshake.
+        """Uploads a complete mission, geofence, or rally-point list using the MAVLink Mission Protocol handshake.
 
         Args:
-            waypoints (list[mavtypes.MissionItem|dict|tuple]): Ordered list of mission items (starting at sequence 0, which is reserved for HOME on ArduPilot). Each element can be:
+            waypoints (list[mavtypes.MissionItem|dict|tuple]): Ordered list of mission items (for standard missions, sequence 0 is reserved for HOME on ArduPilot). Each element can be:
                 - a mavtypes.MissionItem instance
                 - a dict with keys: command, x (or lat/latitude), y (or lon/longitude), z (or alt/altitude/relative_alt), and optional frame, param1, param2, param3, param4
                 - a 4-tuple (command, x, y, z), 5-tuple (command, x, y, z, frame), or 9-tuple (command, x, y, z, frame, param1, param2, param3, param4).
-            clear_existing (bool): Whether to clear existing waypoints on the flight controller before uploading. Default: True.
+            clear_existing (bool): Whether to clear existing items of ``mission_type`` on the flight controller before uploading. Default: True.
             target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
+            mission_type (int): MAV_MISSION_TYPE. Default: MAV_MISSION_TYPE_MISSION.
             **timeout (float|None): Overall timeout in seconds for the upload handshake. 0 means no wait (returns False). None means no overall timeout. Default: 15.0.
             **retry_timeout (float): Timeout in seconds before re-sending the last packet if no request/ack is received. Default: 1.5.
             **max_retries (int): Maximum consecutive retries per step on timeout. Default: 5.
@@ -3549,10 +3560,10 @@ class MAVLinCS:
 
         if clear_existing:
             clear_timeout = min(timeout, 3.0) if timeout is not None else 3.0
-            if not self.clear_waypoints(target_system=target_system, timeout=clear_timeout):
+            if not self.clear_waypoints(target_system=target_system, mission_type=mission_type, timeout=clear_timeout):
                 return False
 
-        if not self.send_waypoint_count(number_waypoints=len(normalized_wps), target_system=target_system):
+        if not self.send_waypoint_count(number_waypoints=len(normalized_wps), target_system=target_system, mission_type=mission_type):
             return False
 
         last_requested_seq: int|None = None
@@ -3600,7 +3611,7 @@ class MAVLinCS:
                         "No MISSION_REQUEST received: retrying MISSION_COUNT (attempt %s/%s)..",
                         retries, max_retries
                     )
-                    if not self.send_waypoint_count(number_waypoints=len(normalized_wps), target_system=target_system):
+                    if not self.send_waypoint_count(number_waypoints=len(normalized_wps), target_system=target_system, mission_type=mission_type):
                         return False
                 else:
                     wp = normalized_wps[last_requested_seq]
@@ -3619,17 +3630,18 @@ class MAVLinCS:
                         x=wp.x,
                         y=wp.y,
                         z=wp.z,
-                        target_system=target_system
+                        target_system=target_system,
+                        mission_type=mission_type
                     ):
                         return False
                 continue
 
-            # Ensure the message is addressed to our system/component and concerns MAV_MISSION_TYPE_MISSION
+            # Ensure the message is addressed to our system/component and matches mission_type
             if getattr(m, "target_system", self.master.source_system) != self.master.source_system:
                 continue
             if getattr(m, "target_component", self.master.source_component) != self.master.source_component:
                 continue
-            if getattr(m, "mission_type", mavutil.mavlink.MAV_MISSION_TYPE_MISSION) != mavutil.mavlink.MAV_MISSION_TYPE_MISSION:
+            if getattr(m, "mission_type", mavutil.mavlink.MAV_MISSION_TYPE_MISSION) != mission_type:
                 continue
 
             msg_type = m.get_type()
@@ -3655,32 +3667,34 @@ class MAVLinCS:
                     x=wp.x,
                     y=wp.y,
                     z=wp.z,
-                    target_system=target_system
+                    target_system=target_system,
+                    mission_type=mission_type
                 ):
                     return False
 
             elif msg_type == "MISSION_ACK":
                 if m.type == mavutil.mavlink.MAV_MISSION_ACCEPTED:
-                    self.logger.info("Mission uploaded successfully (%s waypoints)", len(normalized_wps))
+                    self.logger.info("Mission uploaded successfully (%s items, type=%s)", len(normalized_wps), mission_type)
                     return True
                 self.logger.error("Mission upload failed (MISSION_ACK result=%s)", m.type)
                 return False
 
     def download_mission(self,
             target_system: int|None = None,
+            mission_type: int = mavutil.mavlink.MAV_MISSION_TYPE_MISSION,
             **kwargs
         ) -> list[mavtypes.MissionItem]|None:
-        """Downloads the active waypoint mission from the flight controller using the MAVLink Mission Protocol handshake.
+        """Downloads the active mission, geofence, or rally-point list from the flight controller using the MAVLink Mission Protocol handshake.
 
         Args:
             target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
+            mission_type (int): MAV_MISSION_TYPE. Default: MAV_MISSION_TYPE_MISSION.
             **timeout (float|None): Overall timeout in seconds for the entire download. 0 means no wait (returns None). None means no timeout. Default: 15.
             **retry_timeout (float): Seconds to wait before retrying ``MISSION_REQUEST_LIST`` or ``MISSION_REQUEST_INT``. Default: 1.0.
             **max_retries (int): Maximum number of retries per protocol step before aborting. Default: 3.
 
         Returns:
-            list[mavtypes.MissionItem]|None: Ordered list of ``MissionItem`` objects
-              ([] if the vehicle has no mission stored), or None if the download failed, timed out, or was aborted.
+            list[mavtypes.MissionItem]|None: Ordered list of ``MissionItem`` objects. [] if no items are stored, or None if the download failed, timed out, or was aborted.
 
         Note:
             - On ArduPilot, sequence 0 typically holds the HOME position.
@@ -3726,8 +3740,7 @@ class MAVLinCS:
 
         # Step 1: Request mission count (MISSION_REQUEST_LIST -> MISSION_COUNT)
         self.master.mav.mission_request_list_send(
-            target_system,
-            mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1,
+            target_system, mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1, mission_type
         )
         count: int|None = None
         retries = 0
@@ -3768,8 +3781,7 @@ class MAVLinCS:
                     retries, max_retries,
                 )
                 self.master.mav.mission_request_list_send(
-                    target_system,
-                    mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1,
+                    target_system, mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1, mission_type
                 )
                 continue
 
@@ -3777,7 +3789,7 @@ class MAVLinCS:
                 continue
             if getattr(m, "target_component", self.master.source_component) != self.master.source_component:
                 continue
-            if getattr(m, "mission_type", mavutil.mavlink.MAV_MISSION_TYPE_MISSION) != mavutil.mavlink.MAV_MISSION_TYPE_MISSION:
+            if getattr(m, "mission_type", mavutil.mavlink.MAV_MISSION_TYPE_MISSION) != mission_type:
                 continue
 
             if m.get_type() == "MISSION_ACK":
@@ -3792,9 +3804,7 @@ class MAVLinCS:
         items: list[mavtypes.MissionItem] = []
         for seq in range(count):
             self.master.mav.mission_request_int_send(
-                target_system,
-                mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1,
-                seq,
+                target_system, mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1, seq, mission_type
             )
             retries = 0
             received_item: mavtypes.MissionItem|None = None
@@ -3839,9 +3849,7 @@ class MAVLinCS:
                         seq, retries, max_retries,
                     )
                     self.master.mav.mission_request_int_send(
-                        target_system,
-                        mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1,
-                        seq,
+                        target_system, mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1, seq, mission_type
                     )
                     continue
 
@@ -3849,7 +3857,7 @@ class MAVLinCS:
                     continue
                 if getattr(m, "target_component", self.master.source_component) != self.master.source_component:
                     continue
-                if getattr(m, "mission_type", mavutil.mavlink.MAV_MISSION_TYPE_MISSION) != mavutil.mavlink.MAV_MISSION_TYPE_MISSION:
+                if getattr(m, "mission_type", mavutil.mavlink.MAV_MISSION_TYPE_MISSION) != mission_type:
                     continue
 
                 msg_type = m.get_type()
@@ -3891,9 +3899,279 @@ class MAVLinCS:
             target_system,
             mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1,
             mavutil.mavlink.MAV_MISSION_ACCEPTED,
+            mission_type
         )
-        self.logger.info("Mission downloaded successfully (%s waypoints)", len(items))
+        self.logger.info("Mission downloaded successfully (%s items, type=%s)", len(items), mission_type)
         return items
+
+    def upload_rally_points(self,
+            rally_points: list[mavtypes.MissionItem|dict|tuple],
+            clear_existing: bool = True,
+            target_system: int|None = None,
+            **kwargs
+        ) -> bool:
+        """Uploads a list of Rally Points using the MAVLink Mission Protocol.
+
+        Rally Points provide safe alternate return/landing locations for ``RTL`` / ``QRTL`` (especially valuable on
+        long-range fixed-wing and VTOL aircraft).
+
+        Args:
+            rally_points (list[mavtypes.MissionItem|dict|tuple]): Ordered list of rally points. Each element can be:
+                - a ``mavtypes.MissionItem`` with ``command=MAV_CMD_NAV_RALLY_POINT``
+                - a ``dict`` with keys ``lat``/``latitude``/``x``, ``lon``/``longitude``/``y``, ``alt``/``altitude``/``relative_alt``/``z``,
+                  and optional ``frame`` (default: ``MAV_FRAME_GLOBAL_RELATIVE_ALT_INT``)
+                - a 3-tuple ``(lat, lon, alt)`` or 4-tuple ``(lat, lon, alt, frame)``.
+            clear_existing (bool): Whether to clear existing rally points before uploading. Default: True.
+            target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
+            **timeout (float|None): Overall upload timeout in seconds. Default: 15.
+            **retry_timeout (float): Retry timeout in seconds. Default: 1.0.
+            **max_retries (int): Max retries per step. Default: 3.
+
+        Returns:
+            bool: True if the rally points were accepted by the flight controller, False otherwise.
+
+        Note:
+            - All rally points must use a global coordinate frame.
+            - To remove all rally points, call ``clear_waypoints(mission_type=mavutil.mavlink.MAV_MISSION_TYPE_RALLY)``.
+        """
+        if not rally_points:
+            self.logger.error("Empty rally_points list: Unable to upload rally points")
+            return False
+
+        default_frame = kwargs.get('default_frame', mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT)
+        valid_frames = (
+            mavutil.mavlink.MAV_FRAME_GLOBAL,
+            mavutil.mavlink.MAV_FRAME_GLOBAL_INT,
+            mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,
+            mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
+            mavutil.mavlink.MAV_FRAME_GLOBAL_TERRAIN_ALT,
+            mavutil.mavlink.MAV_FRAME_GLOBAL_TERRAIN_ALT_INT,
+        )
+
+        normalized: list[mavtypes.MissionItem] = []
+        for idx, item in enumerate(rally_points):
+            if isinstance(item, mavtypes.MissionItem):
+                wp = item
+            elif isinstance(item, dict):
+                cmd = int(item.get("command", mavutil.mavlink.MAV_CMD_NAV_RALLY_POINT))
+                x_val = item.get("x", item.get("lat", item.get("latitude", 0.0)))
+                y_val = item.get("y", item.get("lon", item.get("longitude", 0.0)))
+                z_val = item.get("z", item.get("alt", item.get("altitude", item.get("relative_alt", 0.0))))
+                wp = mavtypes.MissionItem(
+                    command=cmd,
+                    x=float(x_val),
+                    y=float(y_val),
+                    z=float(z_val),
+                    frame=int(item.get("frame", default_frame)),
+                    param1=float(item.get("param1", 0.0)),
+                    param2=float(item.get("param2", 0.0)),
+                    param3=float(item.get("param3", 0.0)),
+                    param4=float(item.get("param4", 0.0)),
+                )
+            elif isinstance(item, (tuple, list)):
+                if len(item) == 3:
+                    lat, lon, alt = item
+                    wp = mavtypes.MissionItem(
+                        command=mavutil.mavlink.MAV_CMD_NAV_RALLY_POINT,
+                        x=float(lat), y=float(lon), z=float(alt), frame=default_frame,
+                    )
+                elif len(item) == 4:
+                    lat, lon, alt, frm = item
+                    wp = mavtypes.MissionItem(
+                        command=mavutil.mavlink.MAV_CMD_NAV_RALLY_POINT,
+                        x=float(lat), y=float(lon), z=float(alt), frame=int(frm),
+                    )
+                else:
+                    self.logger.error("Invalid tuple length (%s) for rally point #%s: expected 3 or 4 elements", len(item), idx)
+                    return False
+            else:
+                self.logger.error("Invalid rally point type at index %s: %s", idx, type(item))
+                return False
+
+            if wp.command != mavutil.mavlink.MAV_CMD_NAV_RALLY_POINT:
+                self.logger.error("Rally point #%s has invalid command %s (expected MAV_CMD_NAV_RALLY_POINT)", idx, wp.command)
+                return False
+            if wp.frame not in valid_frames:
+                self.logger.error("Rally point #%s has unsupported frame %s (must be a global MAV_FRAME_GLOBAL*)", idx, wp.frame)
+                return False
+            normalized.append(wp)
+
+        return self.upload_mission(
+            waypoints=normalized,
+            clear_existing=clear_existing,
+            target_system=target_system,
+            mission_type=mavutil.mavlink.MAV_MISSION_TYPE_RALLY,
+            **kwargs,
+        )
+
+    def download_rally_points(self,
+            target_system: int|None = None,
+            **kwargs
+        ) -> list[mavtypes.MissionItem]|None:
+        """Downloads all stored Rally Points from the flight controller.
+
+        Args:
+            target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
+            **timeout (float|None): Overall download timeout in seconds. Default: 15.
+            **retry_timeout (float): Retry timeout in seconds. Default: 1.0.
+            **max_retries (int): Max retries per step. Default: 3.
+
+        Returns:
+            list[mavtypes.MissionItem]|None: List of ``MAV_CMD_NAV_RALLY_POINT`` items. [] if none stored, or None on error/timeout.
+        """
+        return self.download_mission(
+            target_system=target_system,
+            mission_type=mavutil.mavlink.MAV_MISSION_TYPE_RALLY,
+            **kwargs,
+        )
+
+    def upload_geofence(self,
+            fence_items: list[mavtypes.MissionItem|dict|tuple],
+            clear_existing: bool = True,
+            target_system: int|None = None,
+            **kwargs
+        ) -> bool:
+        """Uploads a Geofence definition (inclusion/exclusion polygons, circles, and return point).
+
+        Args:
+            fence_items (list[mavtypes.MissionItem|dict|tuple]): Ordered list of geofence items. Each element must use
+                one of the MAVLink geofence commands:
+                - ``MAV_CMD_NAV_FENCE_RETURN_POINT``
+                - ``MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION`` (``param1`` = vertex count)
+                - ``MAV_CMD_NAV_FENCE_POLYGON_VERTEX_EXCLUSION`` (``param1`` = vertex count)
+                - ``MAV_CMD_NAV_FENCE_CIRCLE_INCLUSION`` (``param1`` = radius in meters)
+                - ``MAV_CMD_NAV_FENCE_CIRCLE_EXCLUSION`` (``param1`` = radius in meters)
+                Accepted item formats match ``upload_mission()`` (``MissionItem``, ``dict``, or 4/5/9-element ``tuple``).
+            clear_existing (bool): Whether to clear existing geofence items before uploading. Default: True.
+            target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
+            **timeout (float|None): Overall upload timeout in seconds. Default: 15.
+            **retry_timeout (float): Retry timeout in seconds. Default: 1.0.
+            **max_retries (int): Max retries per step. Default: 3.
+
+        Returns:
+            bool: True if the geofence was accepted by the flight controller, False otherwise.
+
+        Note:
+            - All geofence items must use a global coordinate frame.
+            - To remove all geofence items, call ``clear_waypoints(mission_type=mavutil.mavlink.MAV_MISSION_TYPE_FENCE)``.
+        """
+        if not fence_items:
+            self.logger.error("Empty fence_items list: Unable to upload geofence")
+            return False
+
+        default_frame = kwargs.get('default_frame', mavutil.mavlink.MAV_FRAME_GLOBAL_INT)
+        valid_frames = (
+            mavutil.mavlink.MAV_FRAME_GLOBAL,
+            mavutil.mavlink.MAV_FRAME_GLOBAL_INT,
+            mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,
+            mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
+            mavutil.mavlink.MAV_FRAME_GLOBAL_TERRAIN_ALT,
+            mavutil.mavlink.MAV_FRAME_GLOBAL_TERRAIN_ALT_INT,
+        )
+        valid_fence_cmds = (
+            mavutil.mavlink.MAV_CMD_NAV_FENCE_RETURN_POINT,
+            mavutil.mavlink.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION,
+            mavutil.mavlink.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_EXCLUSION,
+            mavutil.mavlink.MAV_CMD_NAV_FENCE_CIRCLE_INCLUSION,
+            mavutil.mavlink.MAV_CMD_NAV_FENCE_CIRCLE_EXCLUSION,
+        )
+        polygon_cmds = (
+            mavutil.mavlink.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION,
+            mavutil.mavlink.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_EXCLUSION,
+        )
+        circle_cmds = (
+            mavutil.mavlink.MAV_CMD_NAV_FENCE_CIRCLE_INCLUSION,
+            mavutil.mavlink.MAV_CMD_NAV_FENCE_CIRCLE_EXCLUSION,
+        )
+
+        normalized: list[mavtypes.MissionItem] = []
+        for idx, item in enumerate(fence_items):
+            if isinstance(item, mavtypes.MissionItem):
+                wp = item
+            elif isinstance(item, dict):
+                if "command" not in item:
+                    self.logger.error("Fence item #%s dict is missing required 'command' key", idx)
+                    return False
+                x_val = item.get("x", item.get("lat", item.get("latitude", 0.0)))
+                y_val = item.get("y", item.get("lon", item.get("longitude", 0.0)))
+                z_val = item.get("z", item.get("alt", item.get("altitude", 0.0)))
+                wp = mavtypes.MissionItem(
+                    command=int(item["command"]),
+                    x=float(x_val),
+                    y=float(y_val),
+                    z=float(z_val),
+                    frame=int(item.get("frame", default_frame)),
+                    param1=float(item.get("param1", 0.0)),
+                    param2=float(item.get("param2", 0.0)),
+                    param3=float(item.get("param3", 0.0)),
+                    param4=float(item.get("param4", 0.0)),
+                )
+            elif isinstance(item, (tuple, list)):
+                if len(item) == 4:
+                    cmd, x_val, y_val, z_val = item
+                    wp = mavtypes.MissionItem(
+                        command=int(cmd), x=float(x_val), y=float(y_val), z=float(z_val), frame=default_frame
+                    )
+                elif len(item) == 5:
+                    cmd, x_val, y_val, z_val, frm = item
+                    wp = mavtypes.MissionItem(
+                        command=int(cmd), x=float(x_val), y=float(y_val), z=float(z_val), frame=int(frm)
+                    )
+                elif len(item) == 9:
+                    cmd, x_val, y_val, z_val, frm, p1, p2, p3, p4 = item
+                    wp = mavtypes.MissionItem(
+                        command=int(cmd), x=float(x_val), y=float(y_val), z=float(z_val),
+                        frame=int(frm), param1=float(p1), param2=float(p2), param3=float(p3), param4=float(p4)
+                    )
+                else:
+                    self.logger.error("Invalid tuple length (%s) for fence item #%s: expected 4, 5, or 9 elements", len(item), idx)
+                    return False
+            else:
+                self.logger.error("Invalid fence item type at index %s: %s", idx, type(item))
+                return False
+
+            if wp.command not in valid_fence_cmds:
+                self.logger.error("Fence item #%s has unsupported command %s", idx, wp.command)
+                return False
+            if wp.frame not in valid_frames:
+                self.logger.error("Fence item #%s has unsupported frame %s (must be a global MAV_FRAME_GLOBAL*)", idx, wp.frame)
+                return False
+            if wp.command in polygon_cmds and (wp.param1 < 3 or wp.param1 > 255):
+                self.logger.error("Fence polygon item #%s has invalid vertex count param1=%s (must be in [3, 255])", idx, wp.param1)
+                return False
+            if wp.command in circle_cmds and (not math.isfinite(wp.param1) or wp.param1 <= 0):
+                self.logger.error("Fence circle item #%s has invalid radius param1=%s (must be > 0)", idx, wp.param1)
+                return False
+            normalized.append(wp)
+
+        return self.upload_mission(
+            waypoints=normalized,
+            clear_existing=clear_existing,
+            target_system=target_system,
+            mission_type=mavutil.mavlink.MAV_MISSION_TYPE_FENCE,
+            **kwargs,
+        )
+
+    def download_geofence(self,
+            target_system: int|None = None,
+            **kwargs
+        ) -> list[mavtypes.MissionItem]|None:
+        """Downloads all stored Geofence items from the flight controller.
+
+        Args:
+            target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
+            **timeout (float|None): Overall download timeout in seconds. Default: 15.
+            **retry_timeout (float): Retry timeout in seconds. Default: 1.0.
+            **max_retries (int): Max retries per step. Default: 3.
+
+        Returns:
+            list[mavtypes.MissionItem]|None: List of geofence ``MissionItem`` objects. [] if none stored, or None on error/timeout.
+        """
+        return self.download_mission(
+            target_system=target_system,
+            mission_type=mavutil.mavlink.MAV_MISSION_TYPE_FENCE,
+            **kwargs,
+        )
 
     def start_mission(self,
             first_wp_tkoff: bool = None,

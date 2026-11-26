@@ -125,6 +125,16 @@ def main():
                 has_land_start = any(item.command == mavutil.mavlink.MAV_CMD_DO_LAND_START for item in downloaded)
                 print(f"Verified mission onboard: {len(downloaded)} items (DO_LAND_START present: {has_land_start})")
 
+            # Optional: upload a Rally Point and a circular Geofence exclusion zone, then verify via download
+            rally_pt = MAVLinCS.cartesian_to_geographic_point(gps_home.lat, gps_home.lon, north_displacement=120.0, east_displacement=120.0)
+            if plane.upload_rally_points([(rally_pt.latitude, rally_pt.longitude, 60.0)], timeout=10.0):
+                print(f"Rally points onboard: {len(plane.download_rally_points(timeout=10.0) or [])}")
+            fence_ex = MAVLinCS.cartesian_to_geographic_point(gps_home.lat, gps_home.lon, north_displacement=-250.0, east_displacement=-250.0)
+            if plane.upload_geofence([
+                MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_FENCE_CIRCLE_EXCLUSION, param1=50.0, x=fence_ex.latitude, y=fence_ex.longitude)
+            ], timeout=10.0):
+                print(f"Geofence items onboard: {len(plane.download_geofence(timeout=10.0) or [])}")
+
             # start_mission() automatically arms ArduPlane and switches to AUTO mode
             print("Starting AUTO mission from the runway...")
             if not plane.start_mission(timeout=10):

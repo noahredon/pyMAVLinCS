@@ -118,6 +118,44 @@ def test_plane_telemetry_and_modes(plane_drone):
         assert plane_drone.set_mode(target_mode, timeout_ack=3, timeout_set_mode=4) is True
         assert plane_drone.mode() == target_mode
 
+    # Test Rally Points & Geofence upload/download/clear roundtrip on ArduPlane SITL
+    gps0 = plane_drone.position_gps()
+    rp1 = MAVLinCS.cartesian_to_geographic_point(gps0.lat, gps0.lon, north_displacement=150.0, east_displacement=100.0)
+    rp2 = MAVLinCS.cartesian_to_geographic_point(gps0.lat, gps0.lon, north_displacement=-150.0, east_displacement=-100.0)
+    assert plane_drone.upload_rally_points(
+        [(rp1.latitude, rp1.longitude, 60.0), {"lat": rp2.latitude, "lon": rp2.longitude, "alt": 70.0}],
+        clear_existing=True,
+        timeout=15.0,
+    ) is True
+    dl_rally = plane_drone.download_rally_points(timeout=15.0)
+    assert dl_rally is not None and len(dl_rally) == 2
+    assert all(r.command == mavutil.mavlink.MAV_CMD_NAV_RALLY_POINT for r in dl_rally)
+    assert math.isclose(dl_rally[0].x, rp1.latitude, abs_tol=1e-5)
+    assert plane_drone.clear_waypoints(mission_type=mavutil.mavlink.MAV_MISSION_TYPE_RALLY, timeout=5.0) is True
+    assert plane_drone.download_rally_points(timeout=10.0) == []
+
+    # Geofence: 4-vertex inclusion polygon + exclusion circle, then clear before flight
+    p_nw = MAVLinCS.cartesian_to_geographic_point(gps0.lat, gps0.lon, north_displacement=500.0, east_displacement=-500.0)
+    p_ne = MAVLinCS.cartesian_to_geographic_point(gps0.lat, gps0.lon, north_displacement=500.0, east_displacement=500.0)
+    p_se = MAVLinCS.cartesian_to_geographic_point(gps0.lat, gps0.lon, north_displacement=-500.0, east_displacement=500.0)
+    p_sw = MAVLinCS.cartesian_to_geographic_point(gps0.lat, gps0.lon, north_displacement=-500.0, east_displacement=-500.0)
+    p_ex = MAVLinCS.cartesian_to_geographic_point(gps0.lat, gps0.lon, north_displacement=300.0, east_displacement=-300.0)
+    fence = [
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION, param1=4, x=p_nw.latitude, y=p_nw.longitude),
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION, param1=4, x=p_ne.latitude, y=p_ne.longitude),
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION, param1=4, x=p_se.latitude, y=p_se.longitude),
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION, param1=4, x=p_sw.latitude, y=p_sw.longitude),
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_FENCE_CIRCLE_EXCLUSION, param1=40.0, x=p_ex.latitude, y=p_ex.longitude),
+    ]
+    assert plane_drone.upload_geofence(fence, clear_existing=True, timeout=15.0) is True
+    dl_fence = plane_drone.download_geofence(timeout=15.0)
+    assert dl_fence is not None and len(dl_fence) == 5
+    assert dl_fence[0].command == mavutil.mavlink.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION
+    assert dl_fence[4].command == mavutil.mavlink.MAV_CMD_NAV_FENCE_CIRCLE_EXCLUSION
+    assert math.isclose(dl_fence[4].param1, 40.0, rel_tol=1e-4)
+    assert plane_drone.clear_waypoints(mission_type=mavutil.mavlink.MAV_MISSION_TYPE_FENCE, timeout=5.0) is True
+    assert plane_drone.download_geofence(timeout=10.0) == []
+
 
 def test_plane_takeoff_from_ground(plane_drone):
     """Tests Fixed-Wing runway takeoff via arm() + takeoff() using the autopilot's configured TKOFF_ALT/TKOFF_LVL_PITCH."""
