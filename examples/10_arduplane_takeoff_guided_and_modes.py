@@ -72,7 +72,8 @@ def main():
                 f"Thr: {plane.throttle()}%"
             )
 
-            # 4. Loiter immediately at current position using loiter_here()
+            # 4. Retract landing gear after climb-out and loiter immediately at current position
+            plane.set_landing_gear(deploy=False, timeout_ack=2)
             print("\nCommanding immediate loiter via loiter_here() for 5 seconds...")
             plane.loiter_here(timeout_ack=3)
             time.sleep(5.0)
@@ -119,7 +120,10 @@ def main():
                     timeout_ack=2,
                 )
 
-            # 6. Return To Launch (RTL) — ArduPlane flies back and loiters above HOME
+            # 6. Deploy landing gear and trigger Return-To-Launch (RTL)
+            plane.set_landing_gear(deploy=True, timeout_ack=2)
+            # Arm auto-release parachute safety (or call plane.release_parachute() in an emergency)
+            plane.release_parachute(action=mavutil.mavlink.PARACHUTE_ENABLE, timeout_ack=2)
             print("\nTriggering Return-To-Launch (RTL)...")
             plane.return_to_launch(timeout_ack=3)
             plane.wait_mode_changed("RTL", timeout=5)

@@ -1723,6 +1723,73 @@ def test_loiter_altitude_and_heading_commands_offline():
         mav.close()
 
 
+def test_parachute_and_landing_gear_offline():
+    """Tests release_parachute() and set_landing_gear() offline (input validation, MAVLink params, and ACKs)."""
+    mav = MAVLinCS(address="udpin:127.0.0.1:0", timeout_heartbeat=0, pos_rate=0, mavlogfile=None)
+    try:
+        mav.master.target_system = 1
+        ap_mav = mavutil.mavlink.MAVLink(None, srcSystem=1, srcComponent=1)
+
+        def inject(msg):
+            pkt = msg.pack(ap_mav)
+            decoded = mav.master.mav.decode(bytearray(pkt))
+            decoded._timestamp = time.time()
+            mav.master.post_message(decoded)
+            with mav.mavthread._lock:
+                mav.mavthread._queue.append(decoded)
+                mav.mavthread._msg_received.set()
+
+        # 1. Invalid inputs rejected before sending
+        for bad_action in (-1, 3, 99, True, False, "RELEASE"):
+            assert mav.release_parachute(action=bad_action) is False
+        for bad_deploy in (0, 1, -1, "down", None):
+            assert mav.set_landing_gear(deploy=bad_deploy) is False
+        for bad_id in (-2, True, False, 0.5, "all"):
+            assert mav.set_landing_gear(deploy=True, landing_gear_id=bad_id) is False
+
+        recorded = []
+        ack_result = [mavutil.mavlink.MAV_RESULT_ACCEPTED]
+
+        def on_send(m):
+            if m.get_type() == "COMMAND_LONG":
+                recorded.append((m.command, m.param1, m.param2))
+                inject(ap_mav.command_ack_encode(
+                    m.command, ack_result[0], 0, 0,
+                    mav.master.source_system, mav.master.source_component,
+                ))
+
+        mav.set_additional_send_callback(on_send)
+
+        # 2. release_parachute(): default PARACHUTE_RELEASE, ENABLE, DISABLE, and refused ACK
+        assert mav.release_parachute(timeout_ack=1.0) is True
+        assert recorded[-1] == (mavutil.mavlink.MAV_CMD_DO_PARACHUTE, float(mavutil.mavlink.PARACHUTE_RELEASE), 0.0)
+
+        assert mav.release_parachute(action=mavutil.mavlink.PARACHUTE_ENABLE, timeout_ack=1.0) is True
+        assert recorded[-1] == (mavutil.mavlink.MAV_CMD_DO_PARACHUTE, float(mavutil.mavlink.PARACHUTE_ENABLE), 0.0)
+
+        assert mav.release_parachute(action=mavutil.mavlink.PARACHUTE_DISABLE, timeout_ack=1.0) is True
+        assert recorded[-1] == (mavutil.mavlink.MAV_CMD_DO_PARACHUTE, float(mavutil.mavlink.PARACHUTE_DISABLE), 0.0)
+
+        ack_result[0] = mavutil.mavlink.MAV_RESULT_FAILED
+        assert mav.release_parachute(timeout_ack=1.0) is False
+
+        # 3. set_landing_gear(): deploy=True (param2=0), deploy=False (param2=1), custom gear ID, and refused ACK
+        ack_result[0] = mavutil.mavlink.MAV_RESULT_ACCEPTED
+        assert mav.set_landing_gear(deploy=True, timeout_ack=1.0) is True
+        assert recorded[-1] == (mavutil.mavlink.MAV_CMD_AIRFRAME_CONFIGURATION, -1.0, 0.0)
+
+        assert mav.set_landing_gear(deploy=False, timeout_ack=1.0) is True
+        assert recorded[-1] == (mavutil.mavlink.MAV_CMD_AIRFRAME_CONFIGURATION, -1.0, 1.0)
+
+        assert mav.set_landing_gear(deploy=True, landing_gear_id=0, timeout_ack=1.0) is True
+        assert recorded[-1] == (mavutil.mavlink.MAV_CMD_AIRFRAME_CONFIGURATION, 0.0, 0.0)
+
+        ack_result[0] = mavutil.mavlink.MAV_RESULT_UNSUPPORTED
+        assert mav.set_landing_gear(deploy=False, timeout_ack=1.0) is False
+    finally:
+        mav.close()
+
+
 def test_safety_guards_and_invalid_inputs(drone):
     # PWM out of bounds [1000, 2000]
     assert drone.set_servo(servo_channel=9, pwm=950) is False
@@ -1776,6 +1843,8 @@ def test_safety_guards_and_invalid_inputs(drone):
     assert drone.loiter_here() is False
     assert drone.change_altitude(20.0) is False
     assert drone.change_heading(90.0) is False
+    assert drone.release_parachute() is False
+    assert drone.set_landing_gear(True) is False
     assert drone.set_servo(9, 1500) is False
     assert drone.set_gimbal_target(0.0, 0.0, 10.0) is False
     assert drone.set_gimbal_angles(-45.0, 0.0) is False
@@ -1811,6 +1880,8 @@ def test_safety_guards_and_invalid_inputs(drone):
     assert drone.loiter_here() is False
     assert drone.change_altitude(20.0) is False
     assert drone.change_heading(90.0) is False
+    assert drone.release_parachute() is False
+    assert drone.set_landing_gear(True) is False
     assert drone.do_follow(target_system=2) is None
     assert drone.do_follow_with_takeoff(target_system=2) is None
     assert drone.send_landing_target(0.0, 0.0, 1.0) is None

@@ -1434,6 +1434,152 @@ class MAVLinCS:
             self.logger.error("Servo setting failed")
         return bool(accepted)
 
+    def release_parachute(self,
+            action: int = mavutil.mavlink.PARACHUTE_RELEASE,
+            target_system: int|None = None,
+            **kwargs
+        ) -> bool:
+        """Controls or releases the vehicle's parachute.
+
+        Args:
+            action (int): ``PARACHUTE_ACTION``:
+                - ``PARACHUTE_DISABLE``: Disable automatic parachute release.
+                - ``PARACHUTE_ENABLE``: Enable automatic parachute release.
+                - ``PARACHUTE_RELEASE``: Immediately release the parachute (default).
+            target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
+            **timeout_ack (float|None): ACK waiting timeout in seconds. 0 means no wait (returns False). None means no timeout. Default: 2.
+
+        Returns:
+            bool: True if the command was accepted by the flight controller, False otherwise.
+
+        Note:
+            - Supported on **ArduPilot** (requires firmware built with ``HAL_PARACHUTE_ENABLED``).
+            - On ArduPlane, ``PARACHUTE_RELEASE`` is rejected (returns False) if the parachute is disabled (``CHUTE_ENABLED = 0``), already released, or below ``CHUTE_ALT_MIN`` once airborne.
+            - On ArduPilot, releasing the parachute also automatically deploys the landing gear if ``AP_LANDINGGEAR_ENABLED``.
+        """
+        self.logger.info("Sending DO_PARACHUTE (action=%s)..", action)
+        timeout_ack = kwargs.get('timeout_ack', 2)
+        if self.mission_ended:
+            self.logger.critical("Mission stopped: Unable to send parachute command")
+            return False
+        if not self.allow_actions:
+            self.logger.error("Actions not allowed: Unable to send parachute command")
+            return False
+        if self.master is None:
+            self.logger.error("Master object is not defined!")
+            return False
+
+        valid_actions = (
+            mavutil.mavlink.PARACHUTE_DISABLE,
+            mavutil.mavlink.PARACHUTE_ENABLE,
+            mavutil.mavlink.PARACHUTE_RELEASE,
+        )
+        if isinstance(action, bool) or not isinstance(action, int) or action not in valid_actions:
+            self.logger.error(
+                "Invalid parachute action: %s (must be PARACHUTE_DISABLE/0, PARACHUTE_ENABLE/1, or PARACHUTE_RELEASE/2)",
+                action,
+            )
+            return False
+
+        if target_system is None:
+            target_system = self.master.target_system
+
+        self.master.mav.command_long_send(
+            target_system, # target_system
+            mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1, # target_component
+            mavutil.mavlink.MAV_CMD_DO_PARACHUTE, # command
+            1, # confirmation
+            float(action), # param1 (PARACHUTE_ACTION)
+            0,0,0,0,0,0 # param2-7 (unused)
+        )
+
+        accepted = self.wait_command_ack(
+            command=mavutil.mavlink.MAV_CMD_DO_PARACHUTE,
+            source_system=target_system,
+            timeout=timeout_ack
+        )
+        if accepted:
+            self.logger.info("Parachute command accepted (action=%s)", action)
+        elif accepted is None: # End of mission or Timeout
+            if self.mission_ended:
+                self.logger.critical("End of mission")
+            else:
+                self.logger.critical("Parachute command timed out")
+        else: # Refused
+            self.logger.error("Parachute command failed or refused (action=%s)", action)
+        return bool(accepted)
+
+    def set_landing_gear(self,
+            deploy: bool,
+            landing_gear_id: int = -1,
+            target_system: int|None = None,
+            **kwargs
+        ) -> bool:
+        """Deploys or retracts the vehicle's landing gear.
+
+        Args:
+            deploy (bool): Target landing gear state: True to deploy (down), False to retract (up).
+            landing_gear_id (int): Landing gear instance ID (-1 for all landing gear, >= 0 for a specific gear). Default: -1.
+            target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
+            **timeout_ack (float|None): ACK waiting timeout in seconds. 0 means no wait (returns False). None means no timeout. Default: 2.
+
+        Returns:
+            bool: True if the command was accepted by the flight controller, False otherwise.
+
+        Note:
+            - Supported across ArduPilot vehicles when compiled with ``AP_LANDINGGEAR_ENABLED``.
+            - Physical servo actuation on ArduPilot requires ``LGR_ENABLE = 1`` and a servo channel assigned to landing gear control (``SERVOn_FUNCTION = 29``).
+        """
+        self.logger.info("Setting landing gear (deploy=%s, id=%s)..", deploy, landing_gear_id)
+        timeout_ack = kwargs.get('timeout_ack', 2)
+        if self.mission_ended:
+            self.logger.critical("Mission stopped: Unable to set landing gear")
+            return False
+        if not self.allow_actions:
+            self.logger.error("Actions not allowed: Unable to set landing gear")
+            return False
+        if self.master is None:
+            self.logger.error("Master object is not defined!")
+            return False
+        if not isinstance(deploy, bool):
+            self.logger.error("Invalid deploy value: %s (must be a bool: True=deploy, False=retract)", deploy)
+            return False
+        if isinstance(landing_gear_id, bool) or not isinstance(landing_gear_id, int) or landing_gear_id < -1:
+            self.logger.error("Invalid landing_gear_id: %s (must be an int >= -1)", landing_gear_id)
+            return False
+
+        if target_system is None:
+            target_system = self.master.target_system
+
+        # MAV_CMD_AIRFRAME_CONFIGURATION param2: 0 = Down/Deploy, 1 = Up/Retract
+        gear_position = 0.0 if deploy else 1.0
+
+        self.master.mav.command_long_send(
+            target_system, # target_system
+            mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1, # target_component
+            mavutil.mavlink.MAV_CMD_AIRFRAME_CONFIGURATION, # command
+            1, # confirmation
+            float(landing_gear_id), # param1 (Landing gear ID: -1 for all)
+            gear_position, # param2 (Landing gear position: 0=Deploy/Down, 1=Retract/Up)
+            0,0,0,0,0 # param3-7 (reserved)
+        )
+
+        accepted = self.wait_command_ack(
+            command=mavutil.mavlink.MAV_CMD_AIRFRAME_CONFIGURATION,
+            source_system=target_system,
+            timeout=timeout_ack
+        )
+        if accepted:
+            self.logger.info("Landing gear command accepted (deploy=%s)", deploy)
+        elif accepted is None: # End of mission or Timeout
+            if self.mission_ended:
+                self.logger.critical("End of mission")
+            else:
+                self.logger.critical("Landing gear command timed out")
+        else: # Refused
+            self.logger.error("Landing gear command failed or refused (deploy=%s)", deploy)
+        return bool(accepted)
+
     def set_gimbal_target(self,
             latitude: float,
             longitude: float,

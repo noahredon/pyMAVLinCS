@@ -88,7 +88,7 @@ Integrated support for controlling camera gimbals and servo peripherals:
 - 🖼️ **Angle & Rate Control:** Orient the gimbal precisely by setting pitch/yaw angles, rotation speeds, and reference frames (`set_gimbal_angles`), or read current gimbal orientation (`gimbal_angles`).
 - 📌 **ROI Position Targeting:** Command the gimbal to track a specific GPS coordinate (`set_gimbal_target`).
 - 🔌 **Gimbal Modes:** Set the gimbal to retract mode (`set_gimbal_retract`) or neutral position (`set_gimbal_neutral`).
-- 📏 **Servo Control:** Actuate any servo channel (`set_servo`) and read live PWM outputs (`servo_pwm`).
+- 📏 **Servo, Landing Gear & Parachute Control:** Actuate any servo channel (`set_servo`), read live PWM outputs (`servo_pwm`), deploy or retract retractable landing gear (`set_landing_gear`), and enable, disable, or release an emergency parachute (`release_parachute`).
 
 ### 🔔 Asynchronous Communication, Callbacks & Logging
 

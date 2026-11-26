@@ -108,6 +108,13 @@ def test_plane_telemetry_and_modes(plane_drone):
     # Non-QuadPlane fixed-wing refuses MAV_CMD_DO_VTOL_TRANSITION
     assert plane_drone.vtol_transition(mavutil.mavlink.MAV_VTOL_STATE_FW, timeout_ack=2) is False
 
+    # Test landing gear retract/deploy and parachute enable/disable/denied-release on ArduPlane SITL
+    assert plane_drone.set_landing_gear(deploy=False, timeout_ack=3) is True
+    assert plane_drone.set_landing_gear(deploy=True, timeout_ack=3) is True
+    assert plane_drone.release_parachute(action=mavutil.mavlink.PARACHUTE_DISABLE, timeout_ack=3) is True
+    # Release while disabled (CHUTE_ENABLED=0) must be rejected by ArduPlane
+    assert plane_drone.release_parachute(action=mavutil.mavlink.PARACHUTE_RELEASE, timeout_ack=3) is False
+
     mapping = plane_drone.mode_mapping()
     assert isinstance(mapping, dict)
     for expected_mode in ("MANUAL", "FBWA", "FBWB", "CRUISE", "TAKEOFF", "LOITER", "AUTO", "RTL", "GUIDED"):
