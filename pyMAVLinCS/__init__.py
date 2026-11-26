@@ -607,13 +607,11 @@ class MAVLinCS:
             if hb:
                 if (
                     hb.autopilot == mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA
-                    and hb.type in self._VTOL_MAV_TYPES
-                    and mavutil.mode_mapping_bynumber(hb.type) is None
                     and (hb.base_mode & mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED)
                 ):
-                    fw_map = mavutil.mode_mapping_bynumber(mavutil.mavlink.MAV_TYPE_FIXED_WING)
-                    if fw_map and hb.custom_mode in fw_map:
-                        return fw_map[hb.custom_mode]
+                    mode_map = self._resolve_ardupilot_mode_map(hb.type, by_name=False)
+                    if mode_map and hb.custom_mode in mode_map:
+                        return mode_map[hb.custom_mode]
                 return mavutil.mode_string_v10(hb)
             # Fallback: we check HIGH_LATENCY2
             high_latency2 = self.get_msg(
@@ -621,6 +619,10 @@ class MAVLinCS:
                 source_system=source_system
             )
             if high_latency2:
+                if high_latency2.autopilot == mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA:
+                    mode_map = self._resolve_ardupilot_mode_map(high_latency2.type, by_name=False)
+                    if mode_map and high_latency2.custom_mode in mode_map:
+                        return mode_map[high_latency2.custom_mode]
                 return mavutil.mode_string_v10(high_latency2)
             return "UNKNOWN"
         elif float(mavutil.mavlink.WIRE_PROTOCOL_VERSION) == 0.9:
@@ -4709,6 +4711,18 @@ class MAVLinCS:
                 return None
         return m
 
+    def _resolve_ardupilot_mode_map(self, mav_type: int, by_name: bool = False) -> dict|None:
+        """Resolves ArduPilot mode mapping with fallbacks for MAV_TYPEs missing from pymavlink's AP_MAV_TYPE_MODE_MAP."""
+        lookup = mavutil.mode_mapping_byname if by_name else mavutil.mode_mapping_bynumber
+        mapping = lookup(mav_type)
+        if mapping is not None:
+            return mapping
+        if mav_type in self._VTOL_MAV_TYPES:
+            return lookup(mavutil.mavlink.MAV_TYPE_FIXED_WING)
+        if mav_type in self._COPTER_MAV_TYPES:
+            return lookup(mavutil.mavlink.MAV_TYPE_QUADROTOR)
+        return None
+
     def mode_mapping(self, source_system: int|None = None) -> dict|None:
         """Returns a dictionary mapping flight mode names to their IDs, or None if unknown.
 
@@ -4731,10 +4745,9 @@ class MAVLinCS:
             return mavutil.px4_map
         if mav_type is None:
             return None
-        mapping = mavutil.mode_mapping_byname(mav_type)
-        if mapping is None and mav_autopilot == mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA and mav_type in self._VTOL_MAV_TYPES:
-            return mavutil.mode_mapping_byname(mavutil.mavlink.MAV_TYPE_FIXED_WING)
-        return mapping
+        if mav_autopilot == mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA:
+            return self._resolve_ardupilot_mode_map(mav_type, by_name=True)
+        return mavutil.mode_mapping_byname(mav_type)
 
     # ----------
     # Connection

@@ -1004,6 +1004,52 @@ def test_vtol_state_and_transition_offline():
         mav.close()
 
 
+def test_mode_and_mode_mapping_fallbacks_offline():
+    """Tests mode() and mode_mapping() fallbacks for ArduPilot VTOL and Copter MAV_TYPEs not in pymavlink's default map."""
+    cases = [
+        (mavutil.mavlink.MAV_TYPE_VTOL_RESERVED2, 20, "QLAND", "AUTOLAND"),
+    ]
+    if hasattr(mavutil.mavlink, "MAV_TYPE_VTOL_GYRODYNE"):
+        cases.append((mavutil.mavlink.MAV_TYPE_VTOL_GYRODYNE, 20, "QLAND", "AUTOLAND"))
+    if hasattr(mavutil.mavlink, "MAV_TYPE_GENERIC_MULTIROTOR"):
+        cases.append((mavutil.mavlink.MAV_TYPE_GENERIC_MULTIROTOR, 9, "LAND", "GUIDED"))
+
+    for mav_type, custom_mode, expected_mode, extra_mode in cases:
+        mav = MAVLinCS(address="udpin:127.0.0.1:0", timeout_heartbeat=0, pos_rate=0, mavlogfile=None)
+        try:
+            mav.master.target_system = 1
+            ap_mav = mavutil.mavlink.MAVLink(None, srcSystem=1, srcComponent=1)
+
+            def inject(msg):
+                pkt = msg.pack(ap_mav)
+                decoded = mav.master.mav.decode(bytearray(pkt))
+                decoded._timestamp = time.time()
+                mav.master.post_message(decoded)
+
+            # 1. HIGH_LATENCY2 fallback (before any HEARTBEAT is received)
+            inject(ap_mav.high_latency2_encode(
+                0, mav_type, mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA, custom_mode,
+                *([0] * 23)
+            ))
+            assert mav.mode() == expected_mode
+
+            # 2. HEARTBEAT mode() and mode_mapping()
+            inject(ap_mav.heartbeat_encode(
+                mav_type,
+                mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA,
+                mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
+                custom_mode,
+                mavutil.mavlink.MAV_STATE_ACTIVE,
+            ))
+            assert mav.mode() == expected_mode
+            mapping = mav.mode_mapping()
+            assert mapping is not None
+            assert expected_mode in mapping and extra_mode in mapping
+            assert mapping[expected_mode] == custom_mode
+        finally:
+            mav.close()
+
+
 def test_safety_guards_and_invalid_inputs(drone):
     # PWM out of bounds [1000, 2000]
     assert drone.set_servo(servo_channel=9, pwm=950) is False
