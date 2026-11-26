@@ -1313,6 +1313,122 @@ def test_return_to_launch_vehicle_types_offline():
             mav.close()
 
 
+def test_download_mission_offline_handshake_and_retries():
+    """Tests download_mission() offline: zero timeout, empty mission, packet-loss retries, global/local/legacy item unscaling, and error ACK."""
+    mav = MAVLinCS(address="udpin:127.0.0.1:0", timeout_heartbeat=0, pos_rate=0, mavlogfile=None)
+    try:
+        mav.master.target_system = 1
+        assert mav.download_mission(timeout=0) is None
+
+        ap_mav = mavutil.mavlink.MAVLink(None, srcSystem=1, srcComponent=1)
+
+        def push_incoming(msg):
+            msg.pack(ap_mav)
+            msg._timestamp = time.time()
+            with mav.mavthread._lock:
+                mav.mavthread._queue.append(msg)
+                mav.mavthread._msg_received.set()
+
+        # 1. Empty mission (count=0) -> returns [] and sends MISSION_ACK(ACCEPTED)
+        acks_sent = []
+
+        def on_send_empty(m):
+            mtype = m.get_type()
+            if mtype == "MISSION_REQUEST_LIST":
+                push_incoming(ap_mav.mission_count_encode(
+                    mav.master.source_system, mav.master.source_component, 0
+                ))
+            elif mtype == "MISSION_ACK":
+                acks_sent.append(m.type)
+
+        mav.set_additional_send_callback(on_send_empty)
+        assert mav.download_mission(timeout=2.0, retry_timeout=0.05) == []
+        assert acks_sent == [mavutil.mavlink.MAV_MISSION_ACCEPTED]
+
+        # 2. Full download with retries + global INT (1e7), local INT (1e4), and legacy MISSION_ITEM
+        list_attempts = 0
+        seq1_attempts = 0
+        acks_sent.clear()
+
+        def on_send_full(m):
+            nonlocal list_attempts, seq1_attempts
+            mtype = m.get_type()
+            if mtype == "MISSION_REQUEST_LIST":
+                list_attempts += 1
+                if list_attempts >= 2:  # Drop 1st request to verify retry
+                    push_incoming(ap_mav.mission_count_encode(
+                        mav.master.source_system, mav.master.source_component, 3
+                    ))
+            elif mtype == "MISSION_REQUEST_INT":
+                if m.seq == 0:
+                    push_incoming(ap_mav.mission_item_int_encode(
+                        mav.master.source_system, mav.master.source_component, 0,
+                        mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
+                        mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 1,
+                        1.0, 2.0, 3.0, 4.0,
+                        int(48.1234567 * 1e7), int(2.7654321 * 1e7), 50.0,
+                    ))
+                elif m.seq == 1:
+                    seq1_attempts += 1
+                    if seq1_attempts >= 2:  # Drop 1st request for seq 1 to verify retry
+                        push_incoming(ap_mav.mission_item_int_encode(
+                            mav.master.source_system, mav.master.source_component, 1,
+                            mavutil.mavlink.MAV_FRAME_LOCAL_NED,
+                            mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 1,
+                            0.0, 0.0, 0.0, 0.0,
+                            int(12.5 * 1e4), int(-8.25 * 1e4), -20.0,
+                        ))
+                elif m.seq == 2:
+                    # Legacy MISSION_ITEM (already float, no scaling)
+                    push_incoming(ap_mav.mission_item_encode(
+                        mav.master.source_system, mav.master.source_component, 2,
+                        mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,
+                        mavutil.mavlink.MAV_CMD_DO_LAND_START, 0, 1,
+                        0.0, 0.0, 0.0, 0.0,
+                        48.5, 2.5, 0.0,
+                    ))
+            elif mtype == "MISSION_ACK":
+                acks_sent.append(m.type)
+
+        mav.set_additional_send_callback(on_send_full)
+        downloaded = mav.download_mission(timeout=5.0, retry_timeout=0.05, max_retries=3)
+        assert downloaded is not None and len(downloaded) == 3
+        assert list_attempts == 2 and seq1_attempts == 2
+        assert acks_sent == [mavutil.mavlink.MAV_MISSION_ACCEPTED]
+
+        assert downloaded[0].command == mavutil.mavlink.MAV_CMD_NAV_WAYPOINT
+        assert math.isclose(downloaded[0].x, 48.1234567, abs_tol=1e-6)
+        assert math.isclose(downloaded[0].y, 2.7654321, abs_tol=1e-6)
+        assert math.isclose(downloaded[0].z, 50.0, rel_tol=1e-5)
+        assert downloaded[0].param1 == 1.0 and downloaded[0].param4 == 4.0
+
+        assert downloaded[1].frame == mavutil.mavlink.MAV_FRAME_LOCAL_NED
+        assert math.isclose(downloaded[1].x, 12.5, abs_tol=1e-4)
+        assert math.isclose(downloaded[1].y, -8.25, abs_tol=1e-4)
+        assert math.isclose(downloaded[1].z, -20.0, rel_tol=1e-5)
+
+        assert downloaded[2].command == mavutil.mavlink.MAV_CMD_DO_LAND_START
+        assert math.isclose(downloaded[2].x, 48.5, abs_tol=1e-5)
+        assert math.isclose(downloaded[2].y, 2.5, abs_tol=1e-5)
+
+        # 3. Error MISSION_ACK -> returns None
+        def on_send_error(m):
+            if m.get_type() == "MISSION_REQUEST_LIST":
+                push_incoming(ap_mav.mission_ack_encode(
+                    mav.master.source_system, mav.master.source_component,
+                    mavutil.mavlink.MAV_MISSION_ERROR,
+                ))
+
+        mav.set_additional_send_callback(on_send_error)
+        assert mav.download_mission(timeout=2.0, retry_timeout=0.05) is None
+
+        # 4. No response (max_retries exceeded) -> returns None
+        mav.set_additional_send_callback(lambda m: None)
+        assert mav.download_mission(timeout=2.0, retry_timeout=0.02, max_retries=1) is None
+    finally:
+        mav.close()
+
+
 def test_safety_guards_and_invalid_inputs(drone):
     # PWM out of bounds [1000, 2000]
     assert drone.set_servo(servo_channel=9, pwm=950) is False
@@ -1399,6 +1515,7 @@ def test_safety_guards_and_invalid_inputs(drone):
     assert drone.set_ekf_origin(0.0, 0.0, 0.0) is False
     assert math.isnan(drone.request_home_position().latitude_home)
     assert math.isnan(drone.get_parameter("SYSID_MYGCS"))
+    assert drone.download_mission() is None
     assert drone.send_timesync() is False
     assert drone.send_statustext("Should fail") is False
     assert drone.send_named_value_int(1, "TEST") is False

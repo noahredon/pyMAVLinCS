@@ -165,6 +165,16 @@ def test_plane_auto_takeoff_mission_and_guided_flight(plane_drone):
 
     assert plane_drone.upload_mission(waypoints=mission, clear_existing=True, timeout=15.0) is True
 
+    # Verify mission roundtrip via download_mission()
+    downloaded = plane_drone.download_mission(timeout=15.0)
+    assert downloaded is not None and len(downloaded) == len(mission)
+    downloaded_cmds = [item.command for item in downloaded]
+    assert mavutil.mavlink.MAV_CMD_DO_RETURN_PATH_START in downloaded_cmds
+    assert mavutil.mavlink.MAV_CMD_DO_LAND_START in downloaded_cmds
+    assert mavutil.mavlink.MAV_CMD_NAV_LAND in downloaded_cmds
+    assert math.isclose(downloaded[2].x, wp1.latitude, abs_tol=1e-5)
+    assert math.isclose(downloaded[2].y, wp1.longitude, abs_tol=1e-5)
+
     # Start mission from the ground (automatically arms and enters AUTO mode)
     assert plane_drone.start_mission(timeout=10) is True
     assert plane_drone.motors_armed() is True

@@ -39,6 +39,11 @@ def test_mission_started_in_air(drone):
     gps0 = drone.position_gps()
     _upload_mission(drone, gps0.lat, gps0.lon, include_takeoff_and_rtl=False)
 
+    downloaded = drone.download_mission(timeout=15.0)
+    assert downloaded is not None and len(downloaded) == 3
+    assert downloaded[1].command == mavutil.mavlink.MAV_CMD_NAV_WAYPOINT
+    assert downloaded[2].command == mavutil.mavlink.MAV_CMD_NAV_WAYPOINT
+
     assert drone.arm(timeout_arming=10) is True
     assert drone.takeoff(altitude=10.0, timeout_takeoff=30) is True
 

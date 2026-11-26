@@ -119,6 +119,12 @@ def main():
                 print("Mission upload failed.")
                 return
 
+            # Verify the uploaded mission by downloading it back from the flight controller
+            downloaded = plane.download_mission(timeout=15.0)
+            if downloaded is not None:
+                has_land_start = any(item.command == mavutil.mavlink.MAV_CMD_DO_LAND_START for item in downloaded)
+                print(f"Verified mission onboard: {len(downloaded)} items (DO_LAND_START present: {has_land_start})")
+
             # start_mission() automatically arms ArduPlane and switches to AUTO mode
             print("Starting AUTO mission from the runway...")
             if not plane.start_mission(timeout=10):

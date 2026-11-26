@@ -3666,6 +3666,235 @@ class MAVLinCS:
                 self.logger.error("Mission upload failed (MISSION_ACK result=%s)", m.type)
                 return False
 
+    def download_mission(self,
+            target_system: int|None = None,
+            **kwargs
+        ) -> list[mavtypes.MissionItem]|None:
+        """Downloads the active waypoint mission from the flight controller using the MAVLink Mission Protocol handshake.
+
+        Args:
+            target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
+            **timeout (float|None): Overall timeout in seconds for the entire download. 0 means no wait (returns None). None means no timeout. Default: 15.
+            **retry_timeout (float): Seconds to wait before retrying ``MISSION_REQUEST_LIST`` or ``MISSION_REQUEST_INT``. Default: 1.0.
+            **max_retries (int): Maximum number of retries per protocol step before aborting. Default: 3.
+
+        Returns:
+            list[mavtypes.MissionItem]|None: Ordered list of ``MissionItem`` objects
+              ([] if the vehicle has no mission stored), or None if the download failed, timed out, or was aborted.
+
+        Note:
+            - On ArduPilot, sequence 0 typically holds the HOME position.
+        """
+        self.logger.info("Downloading mission..")
+        timeout = kwargs.get('timeout', 15.0)
+        retry_timeout = kwargs.get('retry_timeout', 1.0)
+        max_retries = kwargs.get('max_retries', 3)
+
+        if self.mission_ended:
+            self.logger.critical("Mission stopped: Unable to download mission")
+            return None
+        if self.master is None:
+            self.logger.error("Master object is not defined!")
+            return None
+        if timeout == 0:
+            self.logger.warning("Zero timeout: not downloading mission")
+            return None
+
+        if target_system is None:
+            target_system = self.master.target_system
+
+        global_frames = (
+            mavutil.mavlink.MAV_FRAME_GLOBAL,
+            mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,
+            mavutil.mavlink.MAV_FRAME_GLOBAL_INT,
+            mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
+            mavutil.mavlink.MAV_FRAME_GLOBAL_TERRAIN_ALT,
+            mavutil.mavlink.MAV_FRAME_GLOBAL_TERRAIN_ALT_INT,
+        )
+        local_frames = (
+            mavutil.mavlink.MAV_FRAME_LOCAL_NED,
+            mavutil.mavlink.MAV_FRAME_LOCAL_ENU,
+            mavutil.mavlink.MAV_FRAME_LOCAL_OFFSET_NED,
+            mavutil.mavlink.MAV_FRAME_LOCAL_FRD,
+            mavutil.mavlink.MAV_FRAME_LOCAL_FLU,
+            mavutil.mavlink.MAV_FRAME_BODY_NED,
+            mavutil.mavlink.MAV_FRAME_BODY_OFFSET_NED,
+            mavutil.mavlink.MAV_FRAME_BODY_FRD,
+        )
+
+        start_time = time.monotonic()
+
+        # Step 1: Request mission count (MISSION_REQUEST_LIST -> MISSION_COUNT)
+        self.master.mav.mission_request_list_send(
+            target_system,
+            mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1,
+        )
+        count: int|None = None
+        retries = 0
+        while count is None:
+            if self.mission_ended:
+                self.logger.critical("Mission stopped: aborting mission download")
+                return None
+
+            wait_time = retry_timeout
+            if timeout is not None:
+                remaining = (start_time + timeout) - time.monotonic()
+                if remaining <= 0:
+                    self.logger.critical("Mission download timed out waiting for MISSION_COUNT")
+                    return None
+                wait_time = min(retry_timeout, remaining)
+
+            m = self.recv_match(
+                type=["MISSION_COUNT", "MISSION_ACK"],
+                blocking=True,
+                timeout=wait_time,
+                source_system=target_system,
+            )
+
+            if self.mission_ended:
+                self.logger.critical("Mission stopped: aborting mission download")
+                return None
+
+            if m is None:
+                if timeout is not None and (start_time + timeout) - time.monotonic() <= 0:
+                    self.logger.critical("Mission download timed out waiting for MISSION_COUNT")
+                    return None
+                retries += 1
+                if retries > max_retries:
+                    self.logger.critical("Mission download failed: max retries (%s) exceeded for MISSION_COUNT", max_retries)
+                    return None
+                self.logger.warning(
+                    "No MISSION_COUNT received: retrying MISSION_REQUEST_LIST (attempt %s/%s)..",
+                    retries, max_retries,
+                )
+                self.master.mav.mission_request_list_send(
+                    target_system,
+                    mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1,
+                )
+                continue
+
+            if getattr(m, "target_system", self.master.source_system) != self.master.source_system:
+                continue
+            if getattr(m, "target_component", self.master.source_component) != self.master.source_component:
+                continue
+            if getattr(m, "mission_type", mavutil.mavlink.MAV_MISSION_TYPE_MISSION) != mavutil.mavlink.MAV_MISSION_TYPE_MISSION:
+                continue
+
+            if m.get_type() == "MISSION_ACK":
+                if m.type != mavutil.mavlink.MAV_MISSION_ACCEPTED:
+                    self.logger.error("Mission download rejected (MISSION_ACK result=%s)", m.type)
+                    return None
+                continue
+
+            count = int(m.count)
+
+        # Step 2: Request each waypoint sequentially (MISSION_REQUEST_INT -> MISSION_ITEM_INT / MISSION_ITEM)
+        items: list[mavtypes.MissionItem] = []
+        for seq in range(count):
+            self.master.mav.mission_request_int_send(
+                target_system,
+                mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1,
+                seq,
+            )
+            retries = 0
+            received_item: mavtypes.MissionItem|None = None
+
+            while received_item is None:
+                if self.mission_ended:
+                    self.logger.critical("Mission stopped: aborting mission download")
+                    return None
+
+                wait_time = retry_timeout
+                if timeout is not None:
+                    remaining = (start_time + timeout) - time.monotonic()
+                    if remaining <= 0:
+                        self.logger.critical("Mission download timed out at waypoint #%s", seq)
+                        return None
+                    wait_time = min(retry_timeout, remaining)
+
+                m = self.recv_match(
+                    type=["MISSION_ITEM_INT", "MISSION_ITEM", "MISSION_ACK"],
+                    blocking=True,
+                    timeout=wait_time,
+                    source_system=target_system,
+                )
+
+                if self.mission_ended:
+                    self.logger.critical("Mission stopped: aborting mission download")
+                    return None
+
+                if m is None:
+                    if timeout is not None and (start_time + timeout) - time.monotonic() <= 0:
+                        self.logger.critical("Mission download timed out at waypoint #%s", seq)
+                        return None
+                    retries += 1
+                    if retries > max_retries:
+                        self.logger.critical(
+                            "Mission download failed: max retries (%s) exceeded at waypoint #%s",
+                            max_retries, seq,
+                        )
+                        return None
+                    self.logger.warning(
+                        "No response for waypoint #%s: retrying MISSION_REQUEST_INT (attempt %s/%s)..",
+                        seq, retries, max_retries,
+                    )
+                    self.master.mav.mission_request_int_send(
+                        target_system,
+                        mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1,
+                        seq,
+                    )
+                    continue
+
+                if getattr(m, "target_system", self.master.source_system) != self.master.source_system:
+                    continue
+                if getattr(m, "target_component", self.master.source_component) != self.master.source_component:
+                    continue
+                if getattr(m, "mission_type", mavutil.mavlink.MAV_MISSION_TYPE_MISSION) != mavutil.mavlink.MAV_MISSION_TYPE_MISSION:
+                    continue
+
+                msg_type = m.get_type()
+                if msg_type == "MISSION_ACK":
+                    if m.type != mavutil.mavlink.MAV_MISSION_ACCEPTED:
+                        self.logger.error("Mission download failed at waypoint #%s (MISSION_ACK result=%s)", seq, m.type)
+                        return None
+                    continue
+
+                if int(m.seq) != seq:
+                    continue
+
+                x_val = float(m.x)
+                y_val = float(m.y)
+                if msg_type == "MISSION_ITEM_INT":
+                    if m.frame in global_frames:
+                        x_val /= 1e7
+                        y_val /= 1e7
+                    elif m.frame in local_frames:
+                        x_val /= 1e4
+                        y_val /= 1e4
+
+                received_item = mavtypes.MissionItem(
+                    command=int(m.command),
+                    x=x_val,
+                    y=y_val,
+                    z=float(m.z),
+                    frame=int(m.frame),
+                    param1=float(m.param1),
+                    param2=float(m.param2),
+                    param3=float(m.param3),
+                    param4=float(m.param4),
+                )
+
+            items.append(received_item)
+
+        # Step 3: Acknowledge mission download completion
+        self.master.mav.mission_ack_send(
+            target_system,
+            mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1,
+            mavutil.mavlink.MAV_MISSION_ACCEPTED,
+        )
+        self.logger.info("Mission downloaded successfully (%s waypoints)", len(items))
+        return items
+
     def start_mission(self,
             first_wp_tkoff: bool = None,
             target_system: int|None = None,
