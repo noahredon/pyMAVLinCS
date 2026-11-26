@@ -79,6 +79,38 @@ class Wind(NamedTuple):
     speed_z: float
     """Vertical wind speed in m/s."""
 
+class NavControllerOutput(NamedTuple):
+    nav_roll: float
+    """Current desired roll in degrees."""
+    nav_pitch: float
+    """Current desired pitch in degrees."""
+    nav_bearing: int | float
+    """Current desired heading in degrees."""
+    target_bearing: int | float
+    """Bearing to current waypoint/target in degrees."""
+    wp_dist: int | float
+    """Distance to active waypoint in meters."""
+    alt_error: float
+    """Current altitude error in meters."""
+    aspd_error: float
+    """Current airspeed error in m/s."""
+    xtrack_error: float
+    """Current crosstrack error on x-y plane in meters."""
+
+class EkfStatus(NamedTuple):
+    flags: int | float
+    """EKF_STATUS_FLAGS bitmask indicating active EKF estimator states."""
+    velocity_variance: float
+    """Velocity variance ratio (values >= 1.0 indicate poor health)."""
+    pos_horiz_variance: float
+    """Horizontal position variance ratio (values >= 1.0 indicate poor health)."""
+    pos_vert_variance: float
+    """Vertical position variance ratio (values >= 1.0 indicate poor health)."""
+    compass_variance: float
+    """Compass variance ratio (values >= 1.0 indicate poor health)."""
+    terrain_alt_variance: float
+    """Terrain altitude variance ratio (values >= 1.0 indicate poor health)."""
+
 class GimbalAngles(NamedTuple):
     roll: float
     """Roll in degrees."""

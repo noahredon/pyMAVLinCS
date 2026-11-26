@@ -229,6 +229,9 @@ def test_offline_open_close_and_thread_lifecycle(tmp_path):
     assert math.isnan(mav.throttle())
     assert math.isnan(mav.climb_rate())
     assert math.isnan(mav.wind().speed)
+    assert math.isnan(mav.nav_controller_output().xtrack_error)
+    assert math.isnan(mav.ekf_status().flags)
+    assert mav.airspeed_healthy() is None
     assert mav.motors_armed() is None
     assert mav.motors_disarmed() is None
     assert mav.mode() == "UNKNOWN"
@@ -238,6 +241,8 @@ def test_offline_open_close_and_thread_lifecycle(tmp_path):
     assert math.isnan(mav.vehicle_type_int())
     assert math.isnan(mav.vtol_state())
     assert mav.vtol_state_str() == "UNKNOWN"
+    assert math.isnan(mav.landed_state())
+    assert mav.landed_state_str() == "UNKNOWN"
     assert math.isnan(mav.custom_mode())
     assert math.isnan(mav.base_mode())
     assert math.isnan(mav.custom_main_mode())
@@ -1130,6 +1135,70 @@ def test_arm_non_armable_modes_offline():
     ok, mode, cmds = run_arm_case(mavutil.mavlink.MAV_TYPE_FIXED_WING, 8)
     assert ok is True and mode == "AUTOTUNE"
     assert cmds == [(mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, 0.0)]
+
+
+def test_aeronautical_and_flight_status_telemetry_offline():
+    """Tests landed_state(), landed_state_str(), nav_controller_output(), airspeed_healthy(), and ekf_status() offline."""
+    mav = MAVLinCS(address="udpin:127.0.0.1:0", timeout_heartbeat=0, pos_rate=0, mavlogfile=None)
+    try:
+        mav.master.target_system = 1
+        ap_mav = mavutil.mavlink.MAVLink(None, srcSystem=1, srcComponent=1)
+
+        def inject(msg):
+            pkt = msg.pack(ap_mav)
+            decoded = mav.master.mav.decode(bytearray(pkt))
+            decoded._timestamp = time.time()
+            mav.master.post_message(decoded)
+
+        # 1. landed_state() & landed_state_str()
+        for val, name in [
+            (mavutil.mavlink.MAV_LANDED_STATE_UNDEFINED, "MAV_LANDED_STATE_UNDEFINED"),
+            (mavutil.mavlink.MAV_LANDED_STATE_ON_GROUND, "MAV_LANDED_STATE_ON_GROUND"),
+            (mavutil.mavlink.MAV_LANDED_STATE_IN_AIR, "MAV_LANDED_STATE_IN_AIR"),
+            (mavutil.mavlink.MAV_LANDED_STATE_TAKEOFF, "MAV_LANDED_STATE_TAKEOFF"),
+            (mavutil.mavlink.MAV_LANDED_STATE_LANDING, "MAV_LANDED_STATE_LANDING"),
+        ]:
+            inject(ap_mav.extended_sys_state_encode(mavutil.mavlink.MAV_VTOL_STATE_UNDEFINED, val))
+            assert mav.landed_state() == val
+            assert mav.landed_state_str() == name
+
+        # 2. nav_controller_output()
+        inject(ap_mav.nav_controller_output_encode(12.5, -3.25, 90, 95, 250, 1.5, -0.75, 4.25))
+        nav = mav.nav_controller_output()
+        assert math.isclose(nav.nav_roll, 12.5, rel_tol=1e-5)
+        assert math.isclose(nav.nav_pitch, -3.25, rel_tol=1e-5)
+        assert nav.nav_bearing == 90
+        assert nav.target_bearing == 95
+        assert nav.wp_dist == 250
+        assert math.isclose(nav.alt_error, 1.5, rel_tol=1e-5)
+        assert math.isclose(nav.aspd_error, -0.75, rel_tol=1e-5)
+        assert math.isclose(nav.xtrack_error, 4.25, rel_tol=1e-5)
+
+        # 3. airspeed_healthy(): not present -> None, present & healthy -> True, present & unhealthy -> False
+        bit = mavutil.mavlink.MAV_SYS_STATUS_SENSOR_DIFFERENTIAL_PRESSURE
+        inject(ap_mav.sys_status_encode(0, 0, 0, 0, 12000, -1, 100, 0, 0, 0, 0, 0, 0))
+        assert mav.airspeed_healthy() is None
+        inject(ap_mav.sys_status_encode(bit, bit, bit, 0, 12000, -1, 100, 0, 0, 0, 0, 0, 0))
+        assert mav.airspeed_healthy() is True
+        inject(ap_mav.sys_status_encode(bit, bit, 0, 0, 12000, -1, 100, 0, 0, 0, 0, 0, 0))
+        assert mav.airspeed_healthy() is False
+
+        # 4. ekf_status()
+        ekf_flags = (
+            mavutil.mavlink.EKF_ATTITUDE
+            | mavutil.mavlink.EKF_VELOCITY_HORIZ
+            | mavutil.mavlink.EKF_POS_HORIZ_ABS
+        )
+        inject(ap_mav.ekf_status_report_encode(ekf_flags, 0.12, 0.08, 0.05, 0.03, 0.0))
+        ekf = mav.ekf_status()
+        assert ekf.flags == ekf_flags
+        assert math.isclose(ekf.velocity_variance, 0.12, rel_tol=1e-5)
+        assert math.isclose(ekf.pos_horiz_variance, 0.08, rel_tol=1e-5)
+        assert math.isclose(ekf.pos_vert_variance, 0.05, rel_tol=1e-5)
+        assert math.isclose(ekf.compass_variance, 0.03, rel_tol=1e-5)
+        assert math.isclose(ekf.terrain_alt_variance, 0.0, abs_tol=1e-6)
+    finally:
+        mav.close()
 
 
 def test_safety_guards_and_invalid_inputs(drone):

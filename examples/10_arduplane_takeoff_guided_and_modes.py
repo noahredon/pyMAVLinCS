@@ -29,9 +29,15 @@ def main():
                 print("Failed to acquire 3D GPS fix.")
                 return
 
-            # 1. Inspect vehicle type, VTOL state, and available ArduPlane modes
+            # 1. Inspect vehicle type, VTOL/landed/sensor status, and available ArduPlane modes
             print(f"Vehicle Type : {plane.vehicle_type_str()} (ID: {plane.vehicle_type_int()})")
             print(f"VTOL State   : {plane.vtol_state_str()} (ID: {plane.vtol_state()})")
+            print(f"Landed State : {plane.landed_state_str()} (ID: {plane.landed_state()})")
+            print(f"Airspeed OK  : {plane.airspeed_healthy()}")
+            ekf = plane.ekf_status()
+            print(f"EKF Status   : flags={ekf.flags}, vel_var={ekf.velocity_variance:.2f}, pos_h_var={ekf.pos_horiz_variance:.2f}")
+            nav = plane.nav_controller_output()
+            print(f"Nav Output   : roll={nav.nav_roll:.1f}°, pitch={nav.nav_pitch:.1f}°, xtrack={nav.xtrack_error:.1f}m")
             if plane.vtol_state() == mavutil.mavlink.MAV_VTOL_STATE_MC:
                 # On a QuadPlane in AUTO mode (or on PX4), request a transition to fixed-wing flight:
                 plane.vtol_transition(mavutil.mavlink.MAV_VTOL_STATE_FW, timeout_ack=2, timeout_transition=20)

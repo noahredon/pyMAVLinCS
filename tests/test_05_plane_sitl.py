@@ -99,6 +99,12 @@ def test_plane_telemetry_and_modes(plane_drone):
     assert plane_drone.vehicle_type_str() == "MAV_TYPE_FIXED_WING"
     assert plane_drone.vtol_state() == mavutil.mavlink.MAV_VTOL_STATE_UNDEFINED
     assert plane_drone.vtol_state_str() == "MAV_VTOL_STATE_UNDEFINED"
+    assert plane_drone.landed_state() == mavutil.mavlink.MAV_LANDED_STATE_ON_GROUND
+    assert plane_drone.landed_state_str() == "MAV_LANDED_STATE_ON_GROUND"
+    assert plane_drone.airspeed_healthy() is True
+    ekf = plane_drone.ekf_status()
+    assert not math.isnan(ekf.flags) and (ekf.flags & mavutil.mavlink.EKF_ATTITUDE)
+    assert ekf.velocity_variance < 1.0 and ekf.pos_horiz_variance < 1.0
     # Non-QuadPlane fixed-wing refuses MAV_CMD_DO_VTOL_TRANSITION
     assert plane_drone.vtol_transition(mavutil.mavlink.MAV_VTOL_STATE_FW, timeout_ack=2) is False
 
@@ -183,6 +189,12 @@ def test_plane_auto_takeoff_mission_and_guided_flight(plane_drone):
     assert not math.isnan(plane_drone.climb_rate())
     wnd = plane_drone.wind()
     assert not math.isnan(wnd.direction) and not math.isnan(wnd.speed)
+    nav = plane_drone.nav_controller_output()
+    assert not math.isnan(nav.nav_roll) and not math.isnan(nav.xtrack_error)
+    assert plane_drone.landed_state() in (
+        mavutil.mavlink.MAV_LANDED_STATE_IN_AIR,
+        mavutil.mavlink.MAV_LANDED_STATE_TAKEOFF,
+    )
 
     # Wait for ArduPlane to reach proximity of wp1 (fixed-wing acceptance radius ~90m)
     assert plane_drone.wait_proximity_with_gps_pos(

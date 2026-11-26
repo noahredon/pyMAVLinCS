@@ -546,6 +546,53 @@ class MAVLinCS:
             speed_z=math.nan
         )
 
+    def nav_controller_output(self, source_system: int|None = None) -> mavtypes.NavControllerOutput:
+        """Navigation controller output.
+
+        Args:
+            source_system (int|None): MAVLink system ID of the device. Defaults to the master's ID.
+
+        Returns:
+            mavtypes.NavControllerOutput:
+                - nav_roll (float): Current desired roll in degrees.
+                - nav_pitch (float): Current desired pitch in degrees.
+                - nav_bearing (int|float): Current desired heading in degrees.
+                - target_bearing (int|float): Bearing to current waypoint/target in degrees.
+                - wp_dist (int|float): Distance to active waypoint in meters.
+                - alt_error (float): Current altitude error in meters.
+                - aspd_error (float): Current airspeed error in m/s.
+                - xtrack_error (float): Current crosstrack error on x-y plane in meters.
+
+        Note:
+            All returned values are NaN if no `NAV_CONTROLLER_OUTPUT`` message has been received.
+            Use ``set_msg_rate("NAV_CONTROLLER_OUTPUT", rate)`` if your flight controller does not stream it by default.
+        """
+        m = self.get_msg(
+            msg_type="NAV_CONTROLLER_OUTPUT",
+            source_system=source_system
+        )
+        if m:
+            return mavtypes.NavControllerOutput(
+                nav_roll=float(m.nav_roll),
+                nav_pitch=float(m.nav_pitch),
+                nav_bearing=int(m.nav_bearing),
+                target_bearing=int(m.target_bearing),
+                wp_dist=int(m.wp_dist),
+                alt_error=float(m.alt_error),
+                aspd_error=float(m.aspd_error),
+                xtrack_error=float(m.xtrack_error),
+            )
+        return mavtypes.NavControllerOutput(
+            nav_roll=math.nan,
+            nav_pitch=math.nan,
+            nav_bearing=math.nan,
+            target_bearing=math.nan,
+            wp_dist=math.nan,
+            alt_error=math.nan,
+            aspd_error=math.nan,
+            xtrack_error=math.nan,
+        )
+
     def motors_armed(self, source_system: int|None = None) -> bool|None:
         """Arming status.
 
@@ -841,6 +888,42 @@ class MAVLinCS:
             return mavutil.mavlink.enums["MAV_VTOL_STATE"][m.vtol_state].name
         return "UNKNOWN"
 
+    def landed_state(self, source_system: int|None = None) -> int|float:
+        """Current landed state.
+
+        Args:
+            source_system (int|None): MAVLink system ID of the device. Defaults to the master's ID.
+
+        Returns:
+            int|float: ``MAV_LANDED_STATE``. NaN if no data has been received.
+        """
+        m = self.get_msg(
+            msg_type="EXTENDED_SYS_STATE",
+            source_system=source_system
+        )
+        if m:
+            return m.landed_state
+        return math.nan
+
+    def landed_state_str(self, source_system: int|None = None) -> str:
+        """Current landed state.
+
+        Args:
+            source_system (int|None): MAVLink system ID of the device. Defaults to the master's ID.
+
+        Returns:
+            str: ``MAV_LANDED_STATE``. ``UNKNOWN`` if no valid data has been received.
+        """
+        m = self.get_msg(
+            msg_type="EXTENDED_SYS_STATE",
+            source_system=source_system
+        )
+        if m:
+            if m.landed_state not in mavutil.mavlink.enums["MAV_LANDED_STATE"]:
+                return f"UNKNOWN: {m.landed_state}"
+            return mavutil.mavlink.enums["MAV_LANDED_STATE"][m.landed_state].name
+        return "UNKNOWN"
+
     def battery_percentage(self, source_system: int|None = None) -> int|float:
         """Remaining battery (requires proper configuration of the flight controller).
 
@@ -900,6 +983,70 @@ class MAVLinCS:
         if m is None:
             return None
         return bool(m.fix_type>=3 and m.lat != 0)
+
+    def airspeed_healthy(self, source_system: int|None = None) -> bool|None:
+        """Airspeed / differential-pressure (Pitot) sensor health.
+
+        Args:
+            source_system (int|None): MAVLink system ID of the device. Defaults to the master's ID.
+
+        Returns:
+            bool|None:
+                - True if an airspeed sensor is present and healthy.
+                - False if an airspeed sensor is present but unhealthy / failed.
+                - None if no ``SYS_STATUS`` message has been received or no airspeed sensor is present on the vehicle.
+        """
+        m = self.get_msg(
+            msg_type="SYS_STATUS",
+            source_system=source_system
+        )
+        if m is None:
+            return None
+        bit = mavutil.mavlink.MAV_SYS_STATUS_SENSOR_DIFFERENTIAL_PRESSURE
+        if not (m.onboard_control_sensors_present & bit):
+            return None
+        return bool(m.onboard_control_sensors_health & bit)
+
+    def ekf_status(self, source_system: int|None = None) -> mavtypes.EkfStatus:
+        """EKF health flags and innovation variances.
+
+        Args:
+            source_system (int|None): MAVLink system ID of the device. Defaults to the master's ID.
+
+        Returns:
+            mavtypes.EkfStatus:
+                - flags (int|float): ``EKF_STATUS_FLAGS`` bitmask.
+                - velocity_variance (float): Velocity variance ratio.
+                - pos_horiz_variance (float): Horizontal position variance ratio.
+                - pos_vert_variance (float): Vertical position variance ratio.
+                - compass_variance (float): Compass variance ratio.
+                - terrain_alt_variance (float): Terrain altitude variance ratio.
+
+        Note:
+            All returned values are NaN if no ``EKF_STATUS_REPORT`` message has been received.
+            Use ``set_msg_rate("EKF_STATUS_REPORT", rate)`` if your flight controller does not stream it by default.
+        """
+        m = self.get_msg(
+            msg_type="EKF_STATUS_REPORT",
+            source_system=source_system
+        )
+        if m:
+            return mavtypes.EkfStatus(
+                flags=int(m.flags),
+                velocity_variance=float(m.velocity_variance),
+                pos_horiz_variance=float(m.pos_horiz_variance),
+                pos_vert_variance=float(m.pos_vert_variance),
+                compass_variance=float(m.compass_variance),
+                terrain_alt_variance=float(m.terrain_alt_variance),
+            )
+        return mavtypes.EkfStatus(
+            flags=math.nan,
+            velocity_variance=math.nan,
+            pos_horiz_variance=math.nan,
+            pos_vert_variance=math.nan,
+            compass_variance=math.nan,
+            terrain_alt_variance=math.nan,
+        )
 
     def servo_pwm(self, servo_channel: int, source_system: int|None = None) -> float:
         """Servo PWM.

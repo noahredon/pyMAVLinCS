@@ -16,6 +16,9 @@ def test_telemetry_getters(drone):
     assert drone.autopilot_str() == "MAV_AUTOPILOT_ARDUPILOTMEGA"
     assert drone.vtol_state() == mavutil.mavlink.MAV_VTOL_STATE_MC
     assert drone.vtol_state_str() == "MAV_VTOL_STATE_MC"
+    assert drone.landed_state() == mavutil.mavlink.MAV_LANDED_STATE_ON_GROUND
+    assert drone.landed_state_str() == "MAV_LANDED_STATE_ON_GROUND"
+    assert drone.airspeed_healthy() is None  # Default ArduCopter SITL has no Pitot/airspeed sensor
     assert drone.gps_3d_fix() is True
     assert drone.mode() != "UNKNOWN"
     assert not math.isnan(drone.custom_mode())
@@ -66,6 +69,12 @@ def test_telemetry_getters(drone):
 
     wnd = drone.wind()
     assert hasattr(wnd, "direction") and hasattr(wnd, "speed") and hasattr(wnd, "speed_z")
+
+    nav = drone.nav_controller_output()
+    assert not math.isnan(nav.nav_roll) and not math.isnan(nav.xtrack_error)
+
+    ekf = drone.ekf_status()
+    assert not math.isnan(ekf.flags) and (ekf.flags & mavutil.mavlink.EKF_ATTITUDE)
 
     assert drone.battery_voltage() > 0.0
     assert not math.isnan(drone.battery_percentage())
