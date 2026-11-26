@@ -281,6 +281,40 @@ def test_plane_auto_takeoff_mission_and_guided_flight(plane_drone):
         timeout_ack=3,
     ) is True
 
+    # Test change_altitude (DO_CHANGE_ALTITUDE and GUIDED_CHANGE_ALTITUDE with slew rate)
+    assert plane_drone.change_altitude(65.0, timeout_ack=3) is True
+    assert plane_drone.change_altitude(70.0, rate=3.0, timeout_ack=3) is True
+
+    # Test change_heading (GUIDED_CHANGE_HEADING COG + reset to DEFAULT)
+    assert plane_drone.change_heading(
+        90.0,
+        heading_type=mavutil.mavlink.HEADING_TYPE_COURSE_OVER_GROUND,
+        max_accel=5.0,
+        timeout_ack=3,
+    ) is True
+    assert plane_drone.change_heading(
+        heading_type=mavutil.mavlink.HEADING_TYPE_DEFAULT,
+        timeout_ack=3,
+    ) is True
+
+    # Test loiter_here() with custom radius/ccw/alt (GUIDED) and default (NAV_LOITER_UNLIM -> LOITER mode)
+    assert plane_drone.loiter_here(radius=70.0, ccw=True, altitude=65.0, timeout_ack=3) is True
+    assert plane_drone.mode() == "GUIDED"
+    assert plane_drone.loiter_here(timeout_ack=3) is True
+    assert plane_drone.wait_mode_changed("LOITER", timeout=5) is True
+
+    # Re-issue do_reposition to wp2 and verify proximity
+    assert plane_drone.do_reposition(
+        latitude=wp2.latitude,
+        longitude=wp2.longitude,
+        altitude=60.0,
+        loiter_radius=65.0,
+        ccw=True,
+        force_guided=True,
+        timeout_ack=3,
+    ) is True
+    assert plane_drone.wait_mode_changed("GUIDED", timeout=5) is True
+
     assert plane_drone.wait_proximity_with_gps_pos(
         lat=wp2.latitude,
         lon=wp2.longitude,

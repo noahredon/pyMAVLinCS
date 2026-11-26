@@ -1616,6 +1616,113 @@ def test_rally_points_and_geofence_offline():
         mav.close()
 
 
+def test_loiter_altitude_and_heading_commands_offline():
+    """Tests loiter_here(), change_altitude(), and change_heading() offline across ArduPlane and ArduCopter."""
+    mav = MAVLinCS(address="udpin:127.0.0.1:0", timeout_heartbeat=0, pos_rate=0, mavlogfile=None)
+    try:
+        mav.master.target_system = 1
+        ap_mav = mavutil.mavlink.MAVLink(None, srcSystem=1, srcComponent=1)
+
+        def inject(msg):
+            pkt = msg.pack(ap_mav)
+            decoded = mav.master.mav.decode(bytearray(pkt))
+            decoded._timestamp = time.time()
+            mav.master.post_message(decoded)
+            with mav.mavthread._lock:
+                mav.mavthread._queue.append(decoded)
+                mav.mavthread._msg_received.set()
+
+        # ArduPlane in GUIDED mode with valid GPS position
+        inject(ap_mav.heartbeat_encode(
+            mavutil.mavlink.MAV_TYPE_FIXED_WING,
+            mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA,
+            mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED | mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED,
+            15,  # GUIDED
+            mavutil.mavlink.MAV_STATE_ACTIVE,
+        ))
+        inject(ap_mav.global_position_int_encode(
+            1000, int(48.1 * 1e7), int(2.2 * 1e7), int(120.0 * 1000), int(55.0 * 1000), 0, 0, 0, 0
+        ))
+
+        # 1. Invalid inputs rejected before sending
+        assert mav.loiter_here(radius=-10.0) is False
+        assert mav.loiter_here(radius=math.nan) is False
+        assert mav.loiter_here(altitude=math.inf) is False
+
+        assert mav.change_altitude(math.nan) is False
+        assert mav.change_altitude(50.0, frame=mavutil.mavlink.MAV_FRAME_LOCAL_NED) is False
+        assert mav.change_altitude(50.0, rate=-1.0) is False
+        assert mav.change_altitude(0.0, rate=2.0) is False
+        assert mav.change_altitude(-1.0, rate=2.0) is False
+
+        assert mav.change_heading(-1.0) is False
+        assert mav.change_heading(360.0) is False
+        assert mav.change_heading(math.nan) is False
+        assert mav.change_heading(90.0, heading_type=99) is False
+        assert mav.change_heading(90.0, heading_type=True) is False
+        assert mav.change_heading(90.0, max_accel=-1.0) is False
+
+        recorded = []
+
+        def on_send(m):
+            mtype = m.get_type()
+            if mtype == "COMMAND_LONG":
+                recorded.append(("LONG", m.command, m.param1, m.param2, m.param3, m.param4))
+                inject(ap_mav.command_ack_encode(
+                    m.command, mavutil.mavlink.MAV_RESULT_ACCEPTED, 0, 0,
+                    mav.master.source_system, mav.master.source_component,
+                ))
+            elif mtype == "COMMAND_INT":
+                recorded.append(("INT", m.command, m.frame, m.param1, m.param2, m.param3, m.param4, m.x, m.y, m.z))
+                inject(ap_mav.command_ack_encode(
+                    m.command, mavutil.mavlink.MAV_RESULT_ACCEPTED, 0, 0,
+                    mav.master.source_system, mav.master.source_component,
+                ))
+
+        mav.set_additional_send_callback(on_send)
+
+        # 2. loiter_here(): default -> NAV_LOITER_UNLIM; custom radius/ccw/alt -> DO_REPOSITION at current GPS
+        assert mav.loiter_here(timeout_ack=1.0) is True
+        assert recorded[-1][0:2] == ("LONG", mavutil.mavlink.MAV_CMD_NAV_LOITER_UNLIM)
+
+        assert mav.loiter_here(radius=75.0, ccw=True, altitude=65.0, timeout_ack=1.0) is True
+        assert recorded[-1][0:2] == ("INT", mavutil.mavlink.MAV_CMD_DO_REPOSITION)
+        assert recorded[-1][5] == 75.0  # param3 = loiter_radius
+        assert recorded[-1][6] == 1.0   # param4 = ccw
+        assert recorded[-1][7] == int(48.1 * 1e7) and recorded[-1][8] == int(2.2 * 1e7)
+        assert recorded[-1][9] == 65.0  # z = altitude
+
+        # 3. change_altitude() on ArduPlane: default -> DO_CHANGE_ALTITUDE; with rate -> GUIDED_CHANGE_ALTITUDE
+        assert mav.change_altitude(80.0, timeout_ack=1.0) is True
+        assert recorded[-1] == ("LONG", mavutil.mavlink.MAV_CMD_DO_CHANGE_ALTITUDE, 80.0, float(mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT), 0.0, 0.0)
+
+        assert mav.change_altitude(90.0, rate=2.5, timeout_ack=1.0) is True
+        assert recorded[-1][0:2] == ("INT", mavutil.mavlink.MAV_CMD_GUIDED_CHANGE_ALTITUDE)
+        assert recorded[-1][5] == 2.5 and recorded[-1][9] == 90.0
+
+        # 4. change_heading() on ArduPlane: COG + DEFAULT cancel
+        assert mav.change_heading(135.0, heading_type=mavutil.mavlink.HEADING_TYPE_COURSE_OVER_GROUND, max_accel=4.0, timeout_ack=1.0) is True
+        assert recorded[-1][0:2] == ("INT", mavutil.mavlink.MAV_CMD_GUIDED_CHANGE_HEADING)
+        assert recorded[-1][3:6] == (0.0, 135.0, 4.0)
+
+        assert mav.change_heading(heading_type=mavutil.mavlink.HEADING_TYPE_DEFAULT, timeout_ack=1.0) is True
+        assert recorded[-1][3] == float(mavutil.mavlink.HEADING_TYPE_DEFAULT)
+
+        # 5. change_altitude() on ArduCopter -> delegates to DO_REPOSITION at current GPS
+        inject(ap_mav.heartbeat_encode(
+            mavutil.mavlink.MAV_TYPE_QUADROTOR,
+            mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA,
+            mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED | mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED,
+            4,  # GUIDED
+            mavutil.mavlink.MAV_STATE_ACTIVE,
+        ))
+        assert mav.change_altitude(20.0, rate=1.0, timeout_ack=1.0) is True
+        assert recorded[-1][0:2] == ("INT", mavutil.mavlink.MAV_CMD_DO_REPOSITION)
+        assert recorded[-1][9] == 20.0
+    finally:
+        mav.close()
+
+
 def test_safety_guards_and_invalid_inputs(drone):
     # PWM out of bounds [1000, 2000]
     assert drone.set_servo(servo_channel=9, pwm=950) is False
@@ -1666,6 +1773,9 @@ def test_safety_guards_and_invalid_inputs(drone):
     assert drone.set_local_pos_target(0.0, 0.0, -10.0) is False
     assert drone.set_speed(1.0, 0.0, 0.0) is False
     assert drone.change_speed(5.0) is False
+    assert drone.loiter_here() is False
+    assert drone.change_altitude(20.0) is False
+    assert drone.change_heading(90.0) is False
     assert drone.set_servo(9, 1500) is False
     assert drone.set_gimbal_target(0.0, 0.0, 10.0) is False
     assert drone.set_gimbal_angles(-45.0, 0.0) is False
@@ -1698,6 +1808,9 @@ def test_safety_guards_and_invalid_inputs(drone):
     assert drone.do_go_around() is False
     assert drone.do_return_path_start() is False
     assert drone.set_current_waypoint(1) is False
+    assert drone.loiter_here() is False
+    assert drone.change_altitude(20.0) is False
+    assert drone.change_heading(90.0) is False
     assert drone.do_follow(target_system=2) is None
     assert drone.do_follow_with_takeoff(target_system=2) is None
     assert drone.send_landing_target(0.0, 0.0, 1.0) is None

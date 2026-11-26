@@ -72,9 +72,9 @@ def main():
                 f"Thr: {plane.throttle()}%"
             )
 
-            # 4. Switch to LOITER mode to circle around current position
-            print("\nSwitching to LOITER mode for 5 seconds...")
-            plane.set_mode("LOITER", timeout_ack=3, timeout_set_mode=4)
+            # 4. Loiter immediately at current position using loiter_here()
+            print("\nCommanding immediate loiter via loiter_here() for 5 seconds...")
+            plane.loiter_here(timeout_ack=3)
             time.sleep(5.0)
 
             # 5. Reposition 250m North, 200m East at 70m relative altitude using do_reposition()
@@ -95,12 +95,16 @@ def main():
                 force_guided=True,
                 timeout_ack=3,
             ):
-                # Adjust target airspeed to 18 m/s while flying in GUIDED mode
+                # Adjust target airspeed, altitude, and heading while flying in GUIDED mode
                 plane.change_speed(
                     speed=18.0,
                     speed_type=mavutil.mavlink.SPEED_TYPE_AIRSPEED,
                     timeout_ack=2,
                 )
+                plane.change_altitude(75.0, rate=2.5, timeout_ack=2)
+                plane.change_heading(90.0, heading_type=mavutil.mavlink.HEADING_TYPE_COURSE_OVER_GROUND, max_accel=4.0, timeout_ack=2)
+                time.sleep(3.0)
+                plane.change_heading(heading_type=mavutil.mavlink.HEADING_TYPE_DEFAULT, timeout_ack=2)
                 plane.wait_proximity_with_gps_pos(
                     lat=target_pt.latitude,
                     lon=target_pt.longitude,
