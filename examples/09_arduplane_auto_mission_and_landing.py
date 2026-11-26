@@ -135,6 +135,11 @@ def main():
             while plane.position_gps().relative_alt < 40.0:
                 time.sleep(1.0)
 
+            # Example: jump explicitly to waypoint #4 using set_current_waypoint()
+            print("Jumping to waypoint #4 via set_current_waypoint(4)...")
+            plane.set_current_waypoint(4, timeout_ack=3)
+            time.sleep(2.0)
+
             # Example: cut the outbound leg short by joining the safe return path via do_return_path_start()
             print("Joining safe return path via do_return_path_start()...")
             plane.do_return_path_start(timeout_ack=3)

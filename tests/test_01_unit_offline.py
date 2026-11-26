@@ -1429,6 +1429,76 @@ def test_download_mission_offline_handshake_and_retries():
         mav.close()
 
 
+def test_set_current_waypoint_offline():
+    """Tests set_current_waypoint() offline: input validation, ArduPilot vs PX4 seq=-1, reset flag, and denied ACK."""
+    mav = MAVLinCS(address="udpin:127.0.0.1:0", timeout_heartbeat=0, pos_rate=0, mavlogfile=None)
+    try:
+        mav.master.target_system = 1
+        ap_mav = mavutil.mavlink.MAVLink(None, srcSystem=1, srcComponent=1)
+
+        def inject(msg):
+            pkt = msg.pack(ap_mav)
+            decoded = mav.master.mav.decode(bytearray(pkt))
+            decoded._timestamp = time.time()
+            mav.master.post_message(decoded)
+            with mav.mavthread._lock:
+                mav.mavthread._queue.append(decoded)
+                mav.mavthread._msg_received.set()
+
+        # Simulate ArduPlane autopilot
+        inject(ap_mav.heartbeat_encode(
+            mavutil.mavlink.MAV_TYPE_FIXED_WING,
+            mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA,
+            mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
+            10,  # AUTO
+            mavutil.mavlink.MAV_STATE_ACTIVE,
+        ))
+
+        # 1. Invalid inputs rejected before sending
+        for bad in (-2, "3", True, False, 1.5):
+            assert mav.set_current_waypoint(bad) is False
+        assert mav.set_current_waypoint(-1, reset=False) is False
+        assert mav.set_current_waypoint(-1, reset=True) is False  # Rejected on ArduPilot
+
+        recorded = []
+
+        def on_gcs_send(m):
+            if m.get_type() == "COMMAND_LONG" and m.command == mavutil.mavlink.MAV_CMD_DO_SET_MISSION_CURRENT:
+                recorded.append((m.param1, m.param2))
+                res = mavutil.mavlink.MAV_RESULT_DENIED if m.param1 >= 10 else mavutil.mavlink.MAV_RESULT_ACCEPTED
+                inject(ap_mav.command_ack_encode(
+                    m.command, res, 0, 0,
+                    mav.master.source_system, mav.master.source_component,
+                ))
+
+        mav.set_additional_send_callback(on_gcs_send)
+
+        # 2. Valid jumps & reset flag
+        assert mav.set_current_waypoint(3, timeout_ack=1.0) is True
+        assert mav.set_current_waypoint(1, reset=True, timeout_ack=1.0) is True
+        # Out-of-range sequence denied by autopilot
+        assert mav.set_current_waypoint(99, timeout_ack=1.0) is False
+
+        # 3. PX4 allows seq=-1 with reset=True
+        inject(ap_mav.heartbeat_encode(
+            mavutil.mavlink.MAV_TYPE_FIXED_WING,
+            mavutil.mavlink.MAV_AUTOPILOT_PX4,
+            mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
+            0,
+            mavutil.mavlink.MAV_STATE_ACTIVE,
+        ))
+        assert mav.set_current_waypoint(-1, reset=True, timeout_ack=1.0) is True
+
+        assert recorded == [
+            (3.0, 0.0),
+            (1.0, 1.0),
+            (99.0, 0.0),
+            (-1.0, 1.0),
+        ]
+    finally:
+        mav.close()
+
+
 def test_safety_guards_and_invalid_inputs(drone):
     # PWM out of bounds [1000, 2000]
     assert drone.set_servo(servo_channel=9, pwm=950) is False
@@ -1490,6 +1560,7 @@ def test_safety_guards_and_invalid_inputs(drone):
     assert drone.clear_waypoints() is False
     assert drone.upload_mission([(16, 0.0, 0.0, 10.0)]) is False
     assert drone.start_mission() is False
+    assert drone.set_current_waypoint(1) is False
     assert drone.reboot() is False
     assert drone.do_follow(target_system=2) is None
     assert drone.do_follow_with_takeoff(target_system=2) is None
@@ -1507,6 +1578,7 @@ def test_safety_guards_and_invalid_inputs(drone):
     assert drone.do_land_start() is False
     assert drone.do_go_around() is False
     assert drone.do_return_path_start() is False
+    assert drone.set_current_waypoint(1) is False
     assert drone.do_follow(target_system=2) is None
     assert drone.do_follow_with_takeoff(target_system=2) is None
     assert drone.send_landing_target(0.0, 0.0, 1.0) is None

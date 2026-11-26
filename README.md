@@ -79,7 +79,7 @@ Utilize powerful built-in mathematical functions for complex navigation and coor
 Simplify the workflow for designing and executing automated `AUTO` missions:
 - 🔢 **Reliable Mission Upload & Download:** Upload (`upload_mission`) or download (`download_mission`) an entire list of waypoints (`MissionItem`, `dict`, or `tuple`) in a single call implementing the full MAVLink Mission Protocol handshake with automatic retries on packet loss.
 - 🛠️ **Low-Level Waypoint Primitives:** Clear stored missions (`clear_waypoints`), announce waypoint counts (`send_waypoint_count`), and upload individual mission items (`send_waypoint`).
-- ▶️ **Mission Execution & Landing Control:** Start the loaded mission from the ground or in flight (`start_mission`), join a safe return corridor (`do_return_path_start`), jump directly into a mission landing sequence (`do_land_start`), or abort an active fixed-wing landing with a go-around (`do_go_around`).
+- ▶️ **Mission Execution & Landing Control:** Start the loaded mission from the ground or in flight (`start_mission`), jump to any waypoint sequence (`set_current_waypoint`), join a safe return corridor (`do_return_path_start`), jump directly into a mission landing sequence (`do_land_start`), or abort an active fixed-wing landing with a go-around (`do_go_around`).
 - ✅ **Mission Status:** Check the active waypoint sequence number (`current_waypoint_seq`) and verify if the waypoint mission is completed (`is_waypoint_mission_completed`).
 
 ### 📸 Gimbal and Payload Control

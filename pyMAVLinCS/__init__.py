@@ -3966,6 +3966,84 @@ class MAVLinCS:
             self.logger.error("Mission start failed")
         return bool(ack)
 
+    def set_current_waypoint(self,
+            seq: int,
+            reset: bool = False,
+            target_system: int|None = None,
+            **kwargs
+        ) -> bool:
+        """Sets the active mission item (waypoint jump) using ``MAV_CMD_DO_SET_MISSION_CURRENT``.
+
+        If a mission is currently running in ``AUTO`` mode, the vehicle immediately navigates to the specified
+        sequence number, skipping intermediate mission items. This command does not switch the vehicle to ``AUTO`` mode.
+
+        Args:
+            seq (int): Mission item sequence number to jump to (must be >= 0 on ArduPilot; -1 with ``reset=True`` is supported on PX4 to reset jump counters without changing the current item).
+            reset (bool): If True, sets ``param2 = 1`` to reset ``MAV_CMD_DO_JUMP`` repeat counters and reactivate a completed mission. Default: False.
+            target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
+            **timeout_ack (float|None): ACK waiting timeout in seconds. 0 means no wait (returns False). None means no timeout. Default: 2.
+
+        Returns:
+            bool: True if the command was accepted by the flight controller, False otherwise.
+
+        Note:
+            - Returns False if seq is out of range for the currently uploaded mission.
+            - On ArduPilot, ``seq = -1`` is not supported; pass an explicit non-negative index.
+            - On ArduPlane, jumping to a new waypoint clears crosstrack for the next leg and resumes a stopped ``AUTO`` mission.
+        """
+        self.logger.info("Setting current waypoint to seq=%s (reset=%s)..", seq, reset)
+        timeout_ack = kwargs.get('timeout_ack', 2)
+        if self.mission_ended:
+            self.logger.critical("Mission stopped: Unable to set current waypoint")
+            return False
+        if not self.allow_actions:
+            self.logger.error("Actions not allowed: Unable to set current waypoint")
+            return False
+        if self.master is None:
+            self.logger.error("Master object is not defined!")
+            return False
+
+        if isinstance(seq, bool) or not isinstance(seq, int) or seq < -1:
+            self.logger.error("Invalid waypoint sequence number: %s (must be an integer >= 0)", seq)
+            return False
+
+        if target_system is None:
+            target_system = self.master.target_system
+
+        is_ardupilot = (self.autopilot_int(source_system=target_system) == mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA)
+        if seq == -1:
+            if not reset or is_ardupilot:
+                self.logger.error(
+                    "Invalid waypoint sequence number: -1 is only valid with reset=True outside ArduPilot"
+                )
+                return False
+
+        self.master.mav.command_long_send(
+            target_system, # target_system
+            mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1, # target_component
+            mavutil.mavlink.MAV_CMD_DO_SET_MISSION_CURRENT, # command
+            1, # confirmation
+            float(seq), # param1 (Mission sequence number)
+            1.0 if reset else 0.0, # param2 (Reset mission)
+            0,0,0,0,0 # param3-7 (unused)
+        )
+
+        accepted = self.wait_command_ack(
+            command=mavutil.mavlink.MAV_CMD_DO_SET_MISSION_CURRENT,
+            source_system=target_system,
+            timeout=timeout_ack
+        )
+        if accepted:
+            self.logger.info("Current waypoint set to seq=%s", seq)
+        elif accepted is None: # Mission end or timeout
+            if self.mission_ended:
+                self.logger.critical("Mission ended")
+            else:
+                self.logger.critical("DO_SET_MISSION_CURRENT timed out")
+        else: # Refused / Denied
+            self.logger.error("DO_SET_MISSION_CURRENT failed or denied (seq=%s)", seq)
+        return bool(accepted)
+
     def return_to_launch(self,
             target_system: int|None = None,
             use_qrtl: bool = True,

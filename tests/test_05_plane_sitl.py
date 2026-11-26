@@ -254,6 +254,16 @@ def test_plane_auto_takeoff_mission_and_guided_flight(plane_drone):
     assert plane_drone.do_return_path_start(timeout_ack=3) is True
     assert plane_drone.wait_mode_changed("AUTO", timeout=5) is True
 
+    # Test set_current_waypoint: jump explicitly to Seq 3 (wp2), and verify out-of-range is denied
+    assert plane_drone.set_current_waypoint(99, timeout_ack=3) is False
+    assert plane_drone.set_current_waypoint(3, timeout_ack=3) is True
+    start_seq_wait = time.time()
+    while time.time() - start_seq_wait < 5:
+        if plane_drone.current_waypoint_seq() == 3:
+            break
+        time.sleep(0.1)
+    assert plane_drone.current_waypoint_seq() == 3
+
     # Test do_land_start: jumps directly to the landing sequence (Seq 6 -> Seq 7 NAV_LAND)
     assert plane_drone.do_land_start(timeout_ack=3) is True
     assert plane_drone.wait_mode_changed("AUTO", timeout=5) is True
