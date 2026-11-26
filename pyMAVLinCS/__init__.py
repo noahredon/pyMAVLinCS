@@ -1870,11 +1870,19 @@ class MAVLinCS:
         if self.autopilot_int(source_system=target_system) == mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA:
             # Check current flight mode
             custom_mode = self.mode(source_system=target_system)
-            if not force and custom_mode in ["INITIALIZING", "PREFLIGHT", "CALIBRATION"]:
+            if not force and custom_mode in ("INITIALIZING", "INITIALISING", "PREFLIGHT", "CALIBRATION"):
                 self.logger.error("Initializing: impossible to arm")
                 return False
 
-            if custom_mode in ["LAND", "TEST", "FOLLOW", "RTL", "FLOWHOLD", "BRAKE", "CIRCLE", "SMART_RTL", "SMARTRTL", "AUTO"]:
+            non_armable_modes = {
+                "LAND", "QLAND", "TEST", "FOLLOW", "RTL", "QRTL",
+                "FLOWHOLD", "BRAKE", "CIRCLE", "SMART_RTL", "SMARTRTL",
+                "AUTO", "AUTO_RTL", "FLIP", "SYSTEMID", "AVOID_ADSB", "AUTOROTATE",
+            }
+            if self.vehicle_type_int(source_system=target_system) in self._COPTER_MAV_TYPES:
+                non_armable_modes.add("AUTOTUNE")
+
+            if custom_mode in non_armable_modes:
                 self.logger.warning("Mode %s not armable: trying to change mode to GUIDED", custom_mode)
                 mod_changed = self.set_mode(
                     mode="GUIDED",

@@ -1050,6 +1050,88 @@ def test_mode_and_mode_mapping_fallbacks_offline():
             mav.close()
 
 
+def test_arm_non_armable_modes_offline():
+    """Tests arm() mode checks for ArduPlane/QuadPlane (INITIALISING, QLAND, QRTL, AUTOTUNE) and ArduCopter (AUTO_RTL, AUTOTUNE, FLIP, SYSTEMID, AVOID_ADSB, AUTOROTATE)."""
+    def run_arm_case(mav_type: int, init_mode_id: int):
+        mav = MAVLinCS(address="udpin:127.0.0.1:0", timeout_heartbeat=0, pos_rate=0, mavlogfile=None)
+        try:
+            mav.master.target_system = 1
+            ap_mav = mavutil.mavlink.MAVLink(None, srcSystem=1, srcComponent=1)
+            recorded_cmds = []
+
+            def inject(msg):
+                pkt = msg.pack(ap_mav)
+                decoded = mav.master.mav.decode(bytearray(pkt))
+                decoded._timestamp = time.time()
+                mav.master.post_message(decoded)
+                with mav.mavthread._lock:
+                    mav.mavthread._queue.append(decoded)
+                    mav.mavthread._msg_received.set()
+
+            def send_hb(custom_mode: int, armed: bool = False):
+                base_mode = mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED
+                if armed:
+                    base_mode |= mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED
+                inject(ap_mav.heartbeat_encode(
+                    mav_type,
+                    mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA,
+                    base_mode,
+                    custom_mode,
+                    mavutil.mavlink.MAV_STATE_ACTIVE,
+                ))
+
+            current_mode = [init_mode_id]
+            send_hb(init_mode_id, armed=False)
+
+            def on_gcs_send(m):
+                if m.get_type() != "COMMAND_LONG":
+                    return
+                recorded_cmds.append((m.command, m.param2))
+                inject(ap_mav.command_ack_encode(
+                    m.command, mavutil.mavlink.MAV_RESULT_ACCEPTED, 0, 0,
+                    mav.master.source_system, mav.master.source_component,
+                ))
+                if m.command == mavutil.mavlink.MAV_CMD_DO_SET_MODE:
+                    current_mode[0] = int(m.param2)
+                    send_hb(current_mode[0], armed=False)
+                elif m.command == mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM:
+                    send_hb(current_mode[0], armed=True)
+
+            mav.set_additional_send_callback(on_gcs_send)
+            ok = mav.arm(timeout_ack=1.0, timeout_arming=1.0)
+            return ok, mav.mode(), recorded_cmds
+        finally:
+            mav.close()
+
+    # 1. ArduPlane INITIALISING (mode 16) -> blocked without sending any command
+    ok, mode, cmds = run_arm_case(mavutil.mavlink.MAV_TYPE_FIXED_WING, 16)
+    assert ok is False and mode == "INITIALISING" and cmds == []
+
+    # 2. QuadPlane QLAND (20) and QRTL (21) -> switches to GUIDED (15) before arming
+    for q_mode_id in (20, 21):
+        ok, mode, cmds = run_arm_case(mavutil.mavlink.MAV_TYPE_VTOL_QUADROTOR, q_mode_id)
+        assert ok is True and mode == "GUIDED"
+        assert cmds == [
+            (mavutil.mavlink.MAV_CMD_DO_SET_MODE, 15.0),
+            (mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, 0.0),
+        ]
+
+    # 3. ArduCopter non-armable modes -> switches to GUIDED (4) before arming
+    # AUTOTUNE(15), FLIP(14), SYSTEMID(25), AVOID_ADSB(19), AUTOROTATE(26), AUTO_RTL(27)
+    for copter_mode_id in (14, 15, 19, 25, 26, 27):
+        ok, mode, cmds = run_arm_case(mavutil.mavlink.MAV_TYPE_QUADROTOR, copter_mode_id)
+        assert ok is True and mode == "GUIDED"
+        assert cmds == [
+            (mavutil.mavlink.MAV_CMD_DO_SET_MODE, 4.0),
+            (mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, 0.0),
+        ]
+
+    # 4. ArduPlane AUTOTUNE (8) IS armable -> arms directly without switching to GUIDED
+    ok, mode, cmds = run_arm_case(mavutil.mavlink.MAV_TYPE_FIXED_WING, 8)
+    assert ok is True and mode == "AUTOTUNE"
+    assert cmds == [(mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, 0.0)]
+
+
 def test_safety_guards_and_invalid_inputs(drone):
     # PWM out of bounds [1000, 2000]
     assert drone.set_servo(servo_channel=9, pwm=950) is False
