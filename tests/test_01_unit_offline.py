@@ -1201,6 +1201,118 @@ def test_aeronautical_and_flight_status_telemetry_offline():
         mav.close()
 
 
+def test_return_to_launch_vehicle_types_offline():
+    """Tests return_to_launch() offline across Copter (RTL), Fixed-Wing (RTL), ArduPlane QuadPlane (QRTL / use_qrtl=False), and PX4 VTOL (RTL)."""
+    cases = [
+        # (autopilot, mav_type, vtol_state, use_qrtl, expected_cmd, expected_param2, expected_mode)
+        (
+            mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA,
+            mavutil.mavlink.MAV_TYPE_QUADROTOR,
+            mavutil.mavlink.MAV_VTOL_STATE_MC,
+            True,
+            mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH,
+            0.0,
+            "GUIDED",
+        ),
+        (
+            mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA,
+            mavutil.mavlink.MAV_TYPE_FIXED_WING,
+            mavutil.mavlink.MAV_VTOL_STATE_UNDEFINED,
+            True,
+            mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH,
+            0.0,
+            "GUIDED",
+        ),
+        (
+            mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA,
+            mavutil.mavlink.MAV_TYPE_VTOL_QUADROTOR,
+            mavutil.mavlink.MAV_VTOL_STATE_FW,
+            True,
+            mavutil.mavlink.MAV_CMD_DO_SET_MODE,
+            21.0,  # Plane QRTL = 21
+            "QRTL",
+        ),
+        (
+            mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA,
+            mavutil.mavlink.MAV_TYPE_FIXED_WING,
+            mavutil.mavlink.MAV_VTOL_STATE_FW,  # QuadPlane with Q_MAV_TYPE=0
+            True,
+            mavutil.mavlink.MAV_CMD_DO_SET_MODE,
+            21.0,
+            "QRTL",
+        ),
+        (
+            mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA,
+            mavutil.mavlink.MAV_TYPE_VTOL_QUADROTOR,
+            mavutil.mavlink.MAV_VTOL_STATE_FW,
+            False,  # Explicit standard RTL
+            mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH,
+            0.0,
+            "GUIDED",
+        ),
+        (
+            mavutil.mavlink.MAV_AUTOPILOT_PX4,
+            mavutil.mavlink.MAV_TYPE_VTOL_QUADROTOR,
+            mavutil.mavlink.MAV_VTOL_STATE_FW,
+            True,  # PX4 uses MAV_CMD_NAV_RETURN_TO_LAUNCH
+            mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH,
+            0.0,
+            None,
+        ),
+    ]
+
+    for autopilot, mav_type, vtol_state, use_qrtl, exp_cmd, exp_p2, exp_mode in cases:
+        mav = MAVLinCS(address="udpin:127.0.0.1:0", timeout_heartbeat=0, pos_rate=0, mavlogfile=None)
+        try:
+            mav.master.target_system = 1
+            ap_mav = mavutil.mavlink.MAVLink(None, srcSystem=1, srcComponent=1)
+            recorded = []
+
+            def inject(msg):
+                pkt = msg.pack(ap_mav)
+                decoded = mav.master.mav.decode(bytearray(pkt))
+                decoded._timestamp = time.time()
+                mav.master.post_message(decoded)
+                with mav.mavthread._lock:
+                    mav.mavthread._queue.append(decoded)
+                    mav.mavthread._msg_received.set()
+
+            init_mode = 4 if mav_type == mavutil.mavlink.MAV_TYPE_QUADROTOR else 15
+            inject(ap_mav.heartbeat_encode(
+                mav_type,
+                autopilot,
+                mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED | mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED,
+                init_mode,
+                mavutil.mavlink.MAV_STATE_ACTIVE,
+            ))
+            inject(ap_mav.extended_sys_state_encode(vtol_state, mavutil.mavlink.MAV_LANDED_STATE_IN_AIR))
+
+            def on_gcs_send(m):
+                if m.get_type() != "COMMAND_LONG":
+                    return
+                recorded.append((m.command, m.param2))
+                inject(ap_mav.command_ack_encode(
+                    m.command, mavutil.mavlink.MAV_RESULT_ACCEPTED, 0, 0,
+                    mav.master.source_system, mav.master.source_component,
+                ))
+                if m.command == mavutil.mavlink.MAV_CMD_DO_SET_MODE:
+                    inject(ap_mav.heartbeat_encode(
+                        mav_type,
+                        autopilot,
+                        mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED | mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED,
+                        int(m.param2),
+                        mavutil.mavlink.MAV_STATE_ACTIVE,
+                    ))
+
+            mav.set_additional_send_callback(on_gcs_send)
+            assert mav.return_to_launch(use_qrtl=use_qrtl, timeout_ack=1.0, timeout_set_mode=1.0) is True
+            assert recorded == [(exp_cmd, exp_p2)]
+            if exp_mode is not None:
+                assert mav.mode() == exp_mode
+        finally:
+            mav.close()
+
+
 def test_safety_guards_and_invalid_inputs(drone):
     # PWM out of bounds [1000, 2000]
     assert drone.set_servo(servo_channel=9, pwm=950) is False

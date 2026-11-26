@@ -186,7 +186,13 @@ def test_quadplane_vtol_takeoff_transition_and_qland(quadplane_drone):
     assert quadplane_drone.vtol_state() == mavutil.mavlink.MAV_VTOL_STATE_MC
     assert quadplane_drone.vtol_state_str() == "MAV_VTOL_STATE_MC"
 
-    # 4. Vertical VTOL landing via land() -> switches to QLAND and waits for touchdown + auto-disarm
+    # 4. Test return_to_launch() on QuadPlane: use_qrtl=False -> RTL, default use_qrtl=True -> QRTL
+    assert quadplane_drone.return_to_launch(use_qrtl=False, timeout_ack=3) is True
+    assert quadplane_drone.wait_mode_changed("RTL", timeout=5) is True
+    assert quadplane_drone.return_to_launch(timeout_ack=3, timeout_set_mode=5) is True
+    assert quadplane_drone.mode() == "QRTL"
+
+    # 5. Vertical VTOL landing via land() -> switches to QLAND and waits for touchdown + auto-disarm
     assert quadplane_drone.land(timeout_ack=3, timeout_set_mode=5, timeout_land=90) is True
     assert quadplane_drone.mode() == "QLAND"
     assert quadplane_drone.motors_disarmed() is True

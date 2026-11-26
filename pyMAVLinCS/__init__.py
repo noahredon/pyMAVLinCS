@@ -3739,19 +3739,31 @@ class MAVLinCS:
 
     def return_to_launch(self,
             target_system: int|None = None,
+            use_qrtl: bool = True,
             **kwargs
         ) -> bool:
-        """Send a Return-To-Launch (RTL) request.
+        """Send a Return-To-Launch (RTL / QRTL) request.
+
+        - **VTOL / QuadPlane (ArduPlane) with ``use_qrtl=True``**: Switches to ``QRTL`` flight mode
+          so the vehicle flies back to HOME (or the nearest Rally Point) and performs an automatic vertical VTOL landing.
+        - **Multirotors (ArduCopter), Fixed-Wing (ArduPlane), PX4, or QuadPlane with ``use_qrtl=False``**: standard RTL.
 
         Args:
             target_system (int|None): Target MAVLink system ID. Defaults to the master's ID.
+            use_qrtl (bool): On ArduPlane VTOL / QuadPlane, use ``QRTL`` mode instead of ``MAV_CMD_NAV_RETURN_TO_LAUNCH``. Default: True.
             **timeout_ack (float|None): ACK waiting timeout. Default: 2.
+            **timeout_set_mode (float|None): Mode change wait timeout used when switching to ``QRTL`` on QuadPlane. Default: 4.
 
         Returns:
             bool: Result of the request.
+
+        Note:
+            - On ArduPlane QuadPlane, standard RTL (``use_qrtl=False``) circles indefinitely above HOME unless
+              ``Q_RTL_MODE`` is configured otherwise, whereas ``QRTL`` (``use_qrtl=True``) returns and lands vertically.
         """
         self.logger.debug("RTL..")
         timeout_ack = kwargs.get('timeout_ack', 2)
+        timeout_set_mode = kwargs.get('timeout_set_mode', 4)
         if self.mission_ended:
             self.logger.critical("Mission stopped: Unable to RTL")
             return False
@@ -3764,6 +3776,22 @@ class MAVLinCS:
 
         if target_system is None:
             target_system = self.master.target_system
+
+        is_ardupilot = (self.autopilot_int(source_system=target_system) == mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA)
+        is_vtol, _ = self._is_vtol_and_fixed_wing(target_system)
+
+        if is_ardupilot and is_vtol and use_qrtl:
+            self.logger.info("Switching VTOL/QuadPlane to QRTL mode..")
+            if self.set_mode(
+                mode="QRTL",
+                target_system=target_system,
+                timeout_ack=timeout_ack,
+                timeout_set_mode=timeout_set_mode
+            ):
+                self.logger.info("QRTL started")
+                return True
+            self.logger.error("QRTL failed")
+            return False
 
         self.master.mav.command_long_send(
             target_system, # target_system

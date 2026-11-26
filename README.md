@@ -60,7 +60,7 @@ Execute mission-critical commands with built-in acknowledgment handling to ensur
 - 🗺️ **Targeted Movement:** Set precise GPS position targets (`set_gps_pos_target`), command 3D GPS repositioning across both multirotors and fixed-wing aircraft (`do_reposition`), or set local NED position targets (`set_local_pos_target`) with optional yaw control.
 - ✈️ **Reposition** Commands the vehicle to reposition to a specific GPS location (`do_reposition`) with optional arguments. Can be used for fixed-wings in Guided/Hold mode.
 - 💨 **Velocity & Speed Control:** Directly command velocity components (`set_speed`: North, East, Down in m/s) and heading, or dynamically adjust target airspeed, groundspeed, climb/descent speed, and cruise throttle (`change_speed`).
-- 🏠 **Return to Launch (RTL):** Send a Return-To-Launch request (`return_to_launch`) for safe mission abort.
+- 🏠 **Return to Launch (RTL / QRTL):** Send a Return-To-Launch request (`return_to_launch`) for safe mission abort, automatically using `QRTL` on ArduPlane VTOL / QuadPlane vehicles (configurable via `use_qrtl`).
 - 🎯 **Dynamic Vehicle Following:** Autonomously take off and follow another moving MAVLink vehicle in real time (`do_follow`, `do_follow_with_takeoff`).
 - 🛬 **Precision Landing Target:** Stream visual/IR landing target offsets in the drone's body frame (`send_landing_target`).
 - 🔧 **System Configuration & Reboot:** Request the full parameter list into cache (`request_all_parameters`), read and modify flight controller parameters on the fly with `PARAM_VALUE` confirmation and automatic retries (`get_parameter`, `write_parameter`), adjust telemetry message streaming rates (`set_msg_rate`), or trigger an autopilot reboot (`reboot`).
