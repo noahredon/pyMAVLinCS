@@ -145,13 +145,13 @@ class MissionItem(NamedTuple):
     command: int
     """MAV_CMD | Waypoint action (e.g., mavutil.mavlink.MAV_CMD_NAV_WAYPOINT)."""
     x: float = 0.0
-    """Global: latitude in degrees, Local: x position in meters."""
+    """Latitude in degrees (global frame) or X position in meters (local frame)."""
     y: float = 0.0
-    """Global: longitude in degrees, Local: y position in meters."""
+    """Longitude in degrees (global frame) or Y position in meters (local frame)."""
     z: float = 0.0
     """Altitude in meters (relative or absolute, depending on the frame)."""
     frame: int = 3
-    """MAV_FRAME | Coordinate system of the waypoint (default: 3 = MAV_FRAME_GLOBAL_RELATIVE_ALT)."""
+    """MAV_FRAME | Coordinate system of the waypoint (default is 3 = MAV_FRAME_GLOBAL_RELATIVE_ALT)."""
     param1: float = 0.0
     """param1 (depending on the command)."""
     param2: float = 0.0

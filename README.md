@@ -131,7 +131,11 @@ The project structure separates the core MAVLink interface, supporting utility c
 ```text
 📂 pyMAVLinCS/
 ├── 📂 pyMAVLinCS/                              # Core Library Package
-│   ├── 📄 __init__.py                          # Main entry point (MAVLinCS class definition)
+│   ├── 📄 __init__.py                          # Main public entry point (MAVLinCS facade and re-exports)
+│   ├── 📄 _core.py                             # Connection lifecycle, message I/O, telemetry getters, and geometry (_Core)
+│   ├── 📄 _system.py                           # Parameters, MCC/STATUSTEXT/TIMESYNC, reboot, and wait_* helpers (_System)
+│   ├── 📄 _flight_control.py                   # Autonomous flight control and payload actuators (_FlightControl)
+│   ├── 📄 _missions.py                         # Mission/Rally/Geofence protocol and .waypoints/.plan I/O (_Missions)
 │   ├── 📄 mavecstra.py                         # Threading, TimesyncHandler, StatustextReceiver, MavLogger
 │   ├── 📄 mavtypes.py                          # Typed data models (GPSPosition, Angles, Speed, etc.)
 │   ├── 📄 mission_control_code.py              # Class definition for MCC (Missio Control Code)

@@ -108,6 +108,7 @@ class MavThread:
         '''Message receive routine (same logic as the pymavlink one)
         
         Traverses the queue from oldest to newest:
+
         - if a message is too old (t - timestamp > last_msg_timeout) -> remove it and continue
         - if a valid message is found -> return it (newer messages remain in the queue)
         - if no valid message -> queue becomes empty and return None
@@ -391,7 +392,7 @@ class TimesyncHandler:
         """Call upon reception of a TIMESYNC message.
 
         Args:
-            MAVLink_message: TIMESYNC message received.
+            m (MAVLink_message): TIMESYNC message received.
 
         Returns:
             bool: True if it is a response to one of our TIMESYNC messages, False otherwise.
