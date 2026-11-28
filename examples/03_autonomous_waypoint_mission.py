@@ -21,20 +21,28 @@ def build_and_upload_mission(drone: MAVLinCS, lat0: float, lon0: float):
     wp2 = MAVLinCS.cartesian_to_geographic_point(lat0, lon0, north_displacement=25.0, east_displacement=25.0)
     wp3 = MAVLinCS.cartesian_to_geographic_point(lat0, lon0, north_displacement=0.0, east_displacement=25.0)
 
-    # Define mission items using MissionItem (tuples (cmd, lat, lon, alt) or dicts are also supported)
-    # Note: Sequence 0 on ArduPilot is reserved for the HOME position
+    # Define mission items using MissionItem (tuples (cmd, lat, lon, alt) or dicts are also supported).
+    # ArduPilot's protocol-level seq 0 HOME slot is handled automatically under the hood.
     mission_items = [
-        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=lat0, y=lon0, z=0.0),               # Seq 0: HOME
-        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, x=lat0, y=lon0, z=12.0),               # Seq 1: Takeoff to 12m
-        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=wp1.latitude, y=wp1.longitude, z=12.0),  # Seq 2: Corner 1
-        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=wp2.latitude, y=wp2.longitude, z=18.0),  # Seq 3: Corner 2 (climb to 18m)
-        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=wp3.latitude, y=wp3.longitude, z=12.0),  # Seq 4: Corner 3 (descend to 12m)
-        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH),                              # Seq 5: RTL
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, x=lat0, y=lon0, z=12.0),                    # Item 1: Takeoff to 12m
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=wp1.latitude, y=wp1.longitude, z=12.0),  # Item 2: Corner 1
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=wp2.latitude, y=wp2.longitude, z=18.0),  # Item 3: Corner 2 (climb to 18m)
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=wp3.latitude, y=wp3.longitude, z=12.0),  # Item 4: Corner 3 (descend to 12m)
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH),                                   # Item 5: RTL
     ]
 
     print(f"Uploading {len(mission_items)} waypoints via MAVLink Mission Protocol...")
+    # Export to Mission Planner (.waypoints) or QGroundControl (.plan), reload, and upload
+    MAVLinCS.save_mission_file("mission_triangle.plan", waypoints=mission_items)
+    loaded_plan = MAVLinCS.load_mission_file("mission_triangle.plan")
+    print(f"Loaded {len(loaded_plan.waypoints)} waypoints from mission_triangle.plan")
+    if not drone.upload_mission_file("mission_triangle.plan", clear_existing=True, timeout=15.0):
+        raise RuntimeError("Mission file upload failed")
+
+    # Or upload MissionItem lists directly and save back from the flight controller
     if not drone.upload_mission(waypoints=mission_items, clear_existing=True, timeout=15.0):
         raise RuntimeError("Mission upload failed or was not acknowledged by the flight controller")
+    drone.download_mission_file("mission_backup.waypoints", timeout=15.0)
     print("Mission uploaded successfully!")
 
 

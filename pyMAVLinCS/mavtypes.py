@@ -160,3 +160,13 @@ class MissionItem(NamedTuple):
     """param3 (depending on the command)."""
     param4: float = 0.0
     """param4 (depending on the command)."""
+
+class MissionPlan(NamedTuple):
+    waypoints: list[MissionItem]
+    """Ordered list of flight mission items (1st element = 1st mission command; excludes ArduPilot's internal seq 0 HOME slot)."""
+    geofence: list[MissionItem] | tuple[MissionItem, ...] = ()
+    """List of geofence items (MAV_CMD_NAV_FENCE_*)."""
+    rally_points: list[MissionItem] | tuple[MissionItem, ...] = ()
+    """List of rally point items (MAV_CMD_NAV_RALLY_POINT)."""
+    home_position: HomePosition | None = None
+    """Planned HOME position (latitude, longitude, altitude MSL) if specified in the file."""

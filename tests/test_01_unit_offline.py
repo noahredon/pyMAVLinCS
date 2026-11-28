@@ -355,6 +355,14 @@ def test_upload_mission_offline_handshake_and_retries():
                         )
                         push_incoming(req2)
                 elif m.seq == 2:
+                    req3 = ap_mav.mission_request_int_encode(
+                        mav.master.source_system,
+                        mav.master.source_component,
+                        3,
+                        mavutil.mavlink.MAV_MISSION_TYPE_MISSION,
+                    )
+                    push_incoming(req3)
+                elif m.seq == 3:
                     ack = ap_mav.mission_ack_encode(
                         mav.master.source_system,
                         mav.master.source_component,
@@ -365,10 +373,10 @@ def test_upload_mission_offline_handshake_and_retries():
 
         mav.set_additional_send_callback(on_gcs_send)
 
-        # Mix MissionItem, dict, and tuple formats in the same mission
+        # Mix MissionItem, dict, and tuple formats (without any manual seq 0 HOME; ArduPilot seq 0 is prepended automatically)
         mixed_waypoints = [
-            MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=48.0, y=2.0, z=0.0),
             {"command": mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, "lat": 48.0, "lon": 2.0, "alt": 10.0},
+            MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=48.001, y=2.001, z=15.0),
             (mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH, 0.0, 0.0, 0.0),
         ]
 
@@ -382,6 +390,9 @@ def test_upload_mission_offline_handshake_and_retries():
         assert ok is True
         assert count_attempts == 2
         assert item1_attempts == 2
+        # Verify MISSION_COUNT was 4 on ArduPilot (1 auto-prepended seq 0 HOME + 3 real items)
+        sent_counts = [m.count for m in sent_messages if m.get_type() == "MISSION_COUNT"]
+        assert sent_counts[-1] == 4
     finally:
         mav.close()
 
@@ -1357,31 +1368,40 @@ def test_download_mission_offline_handshake_and_retries():
                 list_attempts += 1
                 if list_attempts >= 2:  # Drop 1st request to verify retry
                     push_incoming(ap_mav.mission_count_encode(
-                        mav.master.source_system, mav.master.source_component, 3
+                        mav.master.source_system, mav.master.source_component, 4
                     ))
             elif mtype == "MISSION_REQUEST_INT":
                 if m.seq == 0:
+                    # ArduPilot wire seq 0 = HOME (automatically stripped by download_mission)
                     push_incoming(ap_mav.mission_item_int_encode(
                         mav.master.source_system, mav.master.source_component, 0,
-                        mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
+                        mavutil.mavlink.MAV_FRAME_GLOBAL,
                         mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 1,
-                        1.0, 2.0, 3.0, 4.0,
-                        int(48.1234567 * 1e7), int(2.7654321 * 1e7), 50.0,
+                        0.0, 0.0, 0.0, 0.0,
+                        int(48.0 * 1e7), int(2.0 * 1e7), 120.0,
                     ))
                 elif m.seq == 1:
                     seq1_attempts += 1
                     if seq1_attempts >= 2:  # Drop 1st request for seq 1 to verify retry
                         push_incoming(ap_mav.mission_item_int_encode(
                             mav.master.source_system, mav.master.source_component, 1,
-                            mavutil.mavlink.MAV_FRAME_LOCAL_NED,
+                            mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
                             mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 1,
-                            0.0, 0.0, 0.0, 0.0,
-                            int(12.5 * 1e4), int(-8.25 * 1e4), -20.0,
+                            1.0, 2.0, 3.0, 4.0,
+                            int(48.1234567 * 1e7), int(2.7654321 * 1e7), 50.0,
                         ))
                 elif m.seq == 2:
+                    push_incoming(ap_mav.mission_item_int_encode(
+                        mav.master.source_system, mav.master.source_component, 2,
+                        mavutil.mavlink.MAV_FRAME_LOCAL_NED,
+                        mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 1,
+                        0.0, 0.0, 0.0, 0.0,
+                        int(12.5 * 1e4), int(-8.25 * 1e4), -20.0,
+                    ))
+                elif m.seq == 3:
                     # Legacy MISSION_ITEM (already float, no scaling)
                     push_incoming(ap_mav.mission_item_encode(
-                        mav.master.source_system, mav.master.source_component, 2,
+                        mav.master.source_system, mav.master.source_component, 3,
                         mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,
                         mavutil.mavlink.MAV_CMD_DO_LAND_START, 0, 1,
                         0.0, 0.0, 0.0, 0.0,
@@ -1790,6 +1810,349 @@ def test_parachute_and_landing_gear_offline():
         mav.close()
 
 
+def test_mission_file_import_export_offline(tmp_path):
+    """Tests plug-and-play load_mission_file(), save_mission_file(), upload_mission_file(), and download_mission_file() across MP, QGC, ArduPilot, and PX4."""
+    import json
+    from pathlib import Path
+    from pymavlink import mavwp
+    from pyMAVLinCS import MissionPlan
+    from pyMAVLinCS.mavtypes import HomePosition
+
+    repo_root = Path(__file__).resolve().parent.parent
+
+    # 1. Real ArduPilot WPL 110 mission, zero-home WPL 110, fence WPL 110, rally WPL 110, and QGC .plan files
+    sample_wpl = repo_root / "tests" / "ardupilot" / "Tools" / "autotest" / "ArduCopter_Tests" / "CopterMission" / "copter_mission.txt"
+    if sample_wpl.exists():
+        loaded_wpl = MAVLinCS.load_mission_file(sample_wpl)
+        assert isinstance(loaded_wpl, MissionPlan)
+        # 13 lines in file -> seq 0 HOME extracted to home_position + 12 actual flight items in waypoints
+        assert len(loaded_wpl.waypoints) == 12
+        assert loaded_wpl.waypoints[0].command == mavutil.mavlink.MAV_CMD_NAV_TAKEOFF
+        assert loaded_wpl.home_position is not None
+        assert math.isclose(loaded_wpl.home_position.latitude_home, -35.362881, abs_tol=1e-6)
+
+    zero_home_wpl = repo_root / "tests" / "ardupilot" / "Tools" / "autotest" / "ArduPlane_Tests" / "BootInAUTO" / "mission.txt"
+    if zero_home_wpl.exists():
+        loaded_zh = MAVLinCS.load_mission_file(zero_home_wpl)
+        assert loaded_zh.home_position is None
+        assert loaded_zh.waypoints[0].command == mavutil.mavlink.MAV_CMD_NAV_TAKEOFF
+
+    fence_wpl = repo_root / "tests" / "ardupilot" / "modules" / "mavlink" / "pymavlink" / "tests" / "fence-110.txt"
+    if fence_wpl.exists():
+        loaded_fence = MAVLinCS.load_mission_file(fence_wpl)
+        assert loaded_fence.waypoints == []
+        assert len(loaded_fence.geofence) == 10
+        assert loaded_fence.geofence[0].command == mavutil.mavlink.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION
+
+    rally_wpl = repo_root / "tests" / "ardupilot" / "modules" / "mavlink" / "pymavlink" / "tests" / "rally-110.txt"
+    if rally_wpl.exists():
+        loaded_rally = MAVLinCS.load_mission_file(rally_wpl)
+        assert loaded_rally.waypoints == []
+        assert len(loaded_rally.rally_points) >= 2
+        assert loaded_rally.rally_points[0].command == mavutil.mavlink.MAV_CMD_NAV_RALLY_POINT
+
+    sample_plan = repo_root / "tests" / "ardupilot" / "libraries" / "SITL" / "examples" / "Webots" / "mission_test_sitl.plan"
+    if sample_plan.exists():
+        loaded_qgc = MAVLinCS.load_mission_file(sample_plan)
+        assert len(loaded_qgc.waypoints) == 6
+        assert loaded_qgc.waypoints[0].command == mavutil.mavlink.MAV_CMD_NAV_TAKEOFF
+        assert loaded_qgc.home_position is not None
+        assert math.isclose(loaded_qgc.home_position.altitude_home, 584.04, rel_tol=1e-4)
+
+    # 2. Full roundtrip: WPL 110 (.waypoints) + pymavlink.mavwp interoperability + Mission Planner cmd=0 quirk
+    waypoints = [
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, x=48.100000, y=2.200000, z=45.0, param1=15.0),
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=48.102500, y=2.203500, z=50.0, param1=2.0),
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH),
+    ]
+    wpl_file = tmp_path / "mission.waypoints"
+    MAVLinCS.save_mission_file(wpl_file, waypoints, home_position=(48.100000, 2.200000, 120.0))
+
+    # pymavlink.mavwp sees 4 WPL rows (seq 0 HOME + 3 mission items)
+    loader = mavwp.MAVWPLoader()
+    assert loader.load(str(wpl_file)) == 1 + len(waypoints)
+
+    wpl_reloaded = MAVLinCS.load_mission_file(wpl_file)
+    assert len(wpl_reloaded.waypoints) == len(waypoints)
+    assert wpl_reloaded.home_position == HomePosition(48.100000, 2.200000, 120.0)
+    assert wpl_reloaded.waypoints[0].command == mavutil.mavlink.MAV_CMD_NAV_TAKEOFF
+    assert math.isclose(wpl_reloaded.waypoints[0].param1, 15.0, rel_tol=1e-6)
+    assert math.isclose(wpl_reloaded.waypoints[1].x, 48.102500, abs_tol=1e-6)
+
+    # Cross-format conversion: MissionPlan without HOME -> .waypoints -> .plan -> MissionPlan (never eats WP1!)
+    in_air_wps = [
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=48.111, y=2.222, z=30.0),
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=48.115, y=2.228, z=35.0),
+    ]
+    in_air_plan_path = tmp_path / "in_air.plan"
+    in_air_wpl_path = tmp_path / "in_air.waypoints"
+    MAVLinCS.save_mission_file(in_air_plan_path, in_air_wps)
+    assert MAVLinCS.load_mission_file(in_air_plan_path).waypoints == in_air_wps
+    MAVLinCS.save_mission_file(in_air_wpl_path, MAVLinCS.load_mission_file(in_air_plan_path))
+    assert MAVLinCS.load_mission_file(in_air_wpl_path).waypoints == in_air_wps
+
+    # Mission Planner seq 0 command=0 quirk + comments/blank lines
+    mp_quirk = tmp_path / "mp_home_zero.waypoints"
+    mp_quirk.write_text(
+        "QGC WPL 110\n"
+        "# comment line\n\n"
+        "0\t1\t0\t0\t0\t0\t0\t0\t48.1\t2.2\t100.0\t1\n"
+        "1\t0\t3\t22\t15\t0\t0\t0\t48.1\t2.2\t30.0\t1\n",
+        encoding="utf-8",
+    )
+    mp_loaded = MAVLinCS.load_mission_file(mp_quirk)
+    assert len(mp_loaded.waypoints) == 1
+    assert mp_loaded.waypoints[0].command == mavutil.mavlink.MAV_CMD_NAV_TAKEOFF
+    assert mp_loaded.home_position == HomePosition(48.1, 2.2, 100.0)
+
+    # 3. Full roundtrip: QGroundControl .plan (waypoints + home + inclusion/exclusion polygons & circles + breachReturn + rally)
+    geofence = [
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_FENCE_RETURN_POINT, x=48.1005, y=2.2005, z=60.0, frame=mavutil.mavlink.MAV_FRAME_GLOBAL_INT),
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION, param1=4.0, x=48.09, y=2.19, frame=mavutil.mavlink.MAV_FRAME_GLOBAL_INT),
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION, param1=4.0, x=48.11, y=2.19, frame=mavutil.mavlink.MAV_FRAME_GLOBAL_INT),
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION, param1=4.0, x=48.11, y=2.21, frame=mavutil.mavlink.MAV_FRAME_GLOBAL_INT),
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION, param1=4.0, x=48.09, y=2.21, frame=mavutil.mavlink.MAV_FRAME_GLOBAL_INT),
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_EXCLUSION, param1=3.0, x=48.101, y=2.201, frame=mavutil.mavlink.MAV_FRAME_GLOBAL_INT),
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_EXCLUSION, param1=3.0, x=48.102, y=2.201, frame=mavutil.mavlink.MAV_FRAME_GLOBAL_INT),
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_EXCLUSION, param1=3.0, x=48.1015, y=2.202, frame=mavutil.mavlink.MAV_FRAME_GLOBAL_INT),
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_FENCE_CIRCLE_INCLUSION, param1=500.0, x=48.10, y=2.20, frame=mavutil.mavlink.MAV_FRAME_GLOBAL_INT),
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_FENCE_CIRCLE_EXCLUSION, param1=40.0, x=48.103, y=2.203, frame=mavutil.mavlink.MAV_FRAME_GLOBAL_INT),
+    ]
+    rally_points = [
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_RALLY_POINT, x=48.105, y=2.205, z=65.0, frame=mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT),
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_RALLY_POINT, x=48.095, y=2.195, z=70.0, frame=mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT),
+    ]
+    plan_file = tmp_path / "full_flight.plan"
+    MAVLinCS.save_mission_file(
+        plan_file,
+        waypoints=waypoints,
+        geofence=geofence,
+        rally_points=rally_points,
+        home_position=HomePosition(48.100000, 2.200000, 120.0),
+    )
+
+    raw_doc = json.loads(plan_file.read_text(encoding="utf-8"))
+    assert raw_doc["fileType"] == "Plan"
+    assert len(raw_doc["mission"]["items"]) == 3
+    assert len(raw_doc["geoFence"]["polygons"]) == 2
+    assert len(raw_doc["geoFence"]["circles"]) == 2
+    assert len(raw_doc["rallyPoints"]["points"]) == 2
+
+    reloaded_plan = MAVLinCS.load_mission_file(plan_file)
+    assert reloaded_plan.waypoints == waypoints
+    assert reloaded_plan.geofence == geofence
+    assert reloaded_plan.rally_points == rally_points
+    assert reloaded_plan.home_position == HomePosition(48.100000, 2.200000, 120.0)
+
+    # Save directly from MissionPlan object -> identical reload
+    plan_file_copy = tmp_path / "copy.plan"
+    MAVLinCS.save_mission_file(plan_file_copy, reloaded_plan)
+    assert MAVLinCS.load_mission_file(plan_file_copy) == reloaded_plan
+
+    # NaN param4 (default yaw) serializes cleanly to JSON null (strict RFC 8259 JSON) and 0.0 in WPL 110
+    nan_yaw_wp = [MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=48.1, y=2.2, z=25.0, param4=math.nan)]
+    nan_plan_path = tmp_path / "nan_yaw.plan"
+    nan_wpl_path = tmp_path / "nan_yaw.waypoints"
+    MAVLinCS.save_mission_file(nan_plan_path, nan_yaw_wp)
+    assert json.loads(nan_plan_path.read_text(encoding="utf-8"))["mission"]["items"][0]["params"][3] is None
+    MAVLinCS.save_mission_file(nan_wpl_path, nan_yaw_wp)
+    assert len(MAVLinCS.load_mission_file(nan_wpl_path).waypoints) == 1
+
+    # 4. ComplexItems (TransectStyleComplexItem.Items, fwLandingPattern, vtolLandingPattern, unexpanded error) + DO_JUMP doJumpId remapping
+    complex_plan = tmp_path / "complex.plan"
+    complex_plan.write_text(json.dumps({
+        "fileType": "Plan",
+        "version": 1,
+        "mission": {
+            "version": 2,
+            "items": [
+                {"type": "SimpleItem", "doJumpId": 1, "command": 22, "frame": 3, "params": [15, 0, 0, None, 48.1, 2.2, 50]},
+                {
+                    "type": "ComplexItem",
+                    "doJumpId": 5,  # Non-contiguous doJumpId (e.g. items 2..4 deleted in QGC)
+                    "complexItemType": "survey",
+                    "TransectStyleComplexItem": {
+                        "Items": [
+                            {"type": "SimpleItem", "command": 16, "frame": 3, "params": [0, 0, 0, None, 48.11, 2.21, 50]},
+                            {"type": "SimpleItem", "command": 16, "frame": 3, "params": [0, 0, 0, None, 48.12, 2.22, 50]},
+                        ]
+                    },
+                },
+                {"type": "SimpleItem", "doJumpId": 9, "command": 177, "frame": 2, "params": [5, 2, 0, 0, 0, 0, 0]},
+                {
+                    "type": "ComplexItem",
+                    "complexItemType": "fwLandingPattern",
+                    "altitudesAreRelative": True,
+                    "landingApproachCoordinate": [48.13, 2.23, 40],
+                    "landCoordinate": [48.10, 2.20, 0],
+                    "loiterRadius": 75.0,
+                    "loiterClockwise": False,
+                },
+            ],
+        },
+        "geoFence": {"version": 1, "polygons": [[[48.0, 2.0], [48.1, 2.0], [48.1, 2.1]]]},
+        "rallyPoints": {"version": 2, "points": []},
+    }), encoding="utf-8")
+    parsed_complex = MAVLinCS.load_mission_file(complex_plan)
+    # 1 TAKEOFF + 2 survey WPs + 1 DO_JUMP + 3 fwLandingPattern items (DO_LAND_START, LOITER_TO_ALT, NAV_LAND) = 7
+    assert len(parsed_complex.waypoints) == 7
+    assert parsed_complex.waypoints[3].command == mavutil.mavlink.MAV_CMD_DO_JUMP
+    assert parsed_complex.waypoints[3].param1 == 2.0  # doJumpId 5 -> 2nd item in waypoints!
+    assert parsed_complex.waypoints[4].command == mavutil.mavlink.MAV_CMD_DO_LAND_START
+    assert parsed_complex.waypoints[5].command == mavutil.mavlink.MAV_CMD_NAV_LOITER_TO_ALT
+    assert parsed_complex.waypoints[5].param2 == -75.0  # CCW
+    assert parsed_complex.waypoints[6].command == mavutil.mavlink.MAV_CMD_NAV_LAND
+    assert len(parsed_complex.geofence) == 3
+
+    # Unexpanded ComplexItem raises ValueError instead of silently truncating mission
+    unexpanded = tmp_path / "unexpanded.plan"
+    unexpanded.write_text(json.dumps({
+        "fileType": "Plan",
+        "version": 1,
+        "mission": {"version": 2, "items": [{"type": "ComplexItem", "complexItemType": "survey"}]},
+    }), encoding="utf-8")
+    with pytest.raises(ValueError, match="ComplexItem"):
+        MAVLinCS.load_mission_file(unexpanded)
+
+    # Invalid / unsupported inputs
+    with pytest.raises(FileNotFoundError):
+        MAVLinCS.load_mission_file(tmp_path / "does_not_exist.plan")
+    bad_file = tmp_path / "bad.waypoints"
+    bad_file.write_text("INVALID HEADER\n", encoding="utf-8")
+    with pytest.raises(ValueError):
+        MAVLinCS.load_mission_file(bad_file)
+    with pytest.raises(ValueError):
+        MAVLinCS.save_mission_file(tmp_path / "unknown.xyz", waypoints)
+
+    # 5. Offline upload_mission_file() & download_mission_file() across BOTH ArduPilot (drifted HOME) and PX4!
+    mav = MAVLinCS(address="udpin:127.0.0.1:0", timeout_heartbeat=0, pos_rate=0, mavlogfile=None)
+    try:
+        mav.master.target_system = 1
+        ap_mav = mavutil.mavlink.MAVLink(None, srcSystem=1, srcComponent=1)
+        storage: dict[int, list] = {}
+        expected_count: dict[int, int] = {}
+        is_px4 = [False]
+
+        def push(msg):
+            pkt = msg.pack(ap_mav)
+            decoded = mav.master.mav.decode(bytearray(pkt))
+            decoded._timestamp = time.time()
+            mav.master.post_message(decoded)
+            with mav.mavthread._lock:
+                mav.mavthread._queue.append(decoded)
+                mav.mavthread._msg_received.set()
+
+        def on_send(m):
+            mtype = m.get_type()
+            mt = getattr(m, "mission_type", mavutil.mavlink.MAV_MISSION_TYPE_MISSION)
+            if mtype == "MISSION_CLEAR_ALL":
+                storage[mt] = []
+                push(ap_mav.mission_ack_encode(
+                    mav.master.source_system, mav.master.source_component,
+                    mavutil.mavlink.MAV_MISSION_ACCEPTED, mission_type=mt,
+                ))
+            elif mtype == "MISSION_COUNT":
+                expected_count[mt] = m.count
+                storage[mt] = []
+                if m.count > 0:
+                    push(ap_mav.mission_request_int_encode(
+                        mav.master.source_system, mav.master.source_component, 0, mission_type=mt,
+                    ))
+                else:
+                    push(ap_mav.mission_ack_encode(
+                        mav.master.source_system, mav.master.source_component,
+                        mavutil.mavlink.MAV_MISSION_ACCEPTED, mission_type=mt,
+                    ))
+            elif mtype == "MISSION_ITEM_INT":
+                # Simulate ArduPilot overwriting wire seq 0 with its actual drifted GPS HOME (48.1008, 2.2009, 125m)
+                if not is_px4[0] and mt == mavutil.mavlink.MAV_MISSION_TYPE_MISSION and m.seq == 0:
+                    m = ap_mav.mission_item_int_encode(
+                        0, 0, 0, mavutil.mavlink.MAV_FRAME_GLOBAL, mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 1,
+                        0, 0, 0, 0, int(48.1008 * 1e7), int(2.2009 * 1e7), 125.0, mission_type=mt,
+                    )
+                storage[mt].append(m)
+                if len(storage[mt]) < expected_count[mt]:
+                    push(ap_mav.mission_request_int_encode(
+                        mav.master.source_system, mav.master.source_component, len(storage[mt]), mission_type=mt,
+                    ))
+                else:
+                    push(ap_mav.mission_ack_encode(
+                        mav.master.source_system, mav.master.source_component,
+                        mavutil.mavlink.MAV_MISSION_ACCEPTED, mission_type=mt,
+                    ))
+            elif mtype == "MISSION_REQUEST_LIST":
+                push(ap_mav.mission_count_encode(
+                    mav.master.source_system, mav.master.source_component, len(storage.get(mt, [])), mission_type=mt,
+                ))
+            elif mtype == "MISSION_REQUEST_INT":
+                stored = storage[mt][m.seq]
+                push(ap_mav.mission_item_int_encode(
+                    mav.master.source_system, mav.master.source_component, m.seq,
+                    stored.frame, stored.command, 0, 1,
+                    stored.param1, stored.param2, stored.param3, stored.param4,
+                    stored.x, stored.y, stored.z, mission_type=mt,
+                ))
+
+        mav.set_additional_send_callback(on_send)
+
+        # 5a. ArduPilot: wire has 1 + 3 = 4 items; drifted HOME never duplicates into downloaded .plan or .waypoints!
+        push(ap_mav.heartbeat_encode(
+            mavutil.mavlink.MAV_TYPE_QUADROTOR,
+            mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA,
+            0, 0, mavutil.mavlink.MAV_STATE_STANDBY,
+        ))
+        assert mav.upload_mission_file(plan_file, timeout=5.0) is True
+        assert len(storage[mavutil.mavlink.MAV_MISSION_TYPE_MISSION]) == 1 + len(waypoints)
+        assert len(storage[mavutil.mavlink.MAV_MISSION_TYPE_FENCE]) == len(geofence)
+        assert len(storage[mavutil.mavlink.MAV_MISSION_TYPE_RALLY]) == len(rally_points)
+
+        dl_plan_path = tmp_path / "downloaded_ap.plan"
+        assert mav.download_mission_file(dl_plan_path, timeout=5.0) is True
+        dl_plan = MAVLinCS.load_mission_file(dl_plan_path)
+        assert len(dl_plan.waypoints) == len(waypoints)
+        assert dl_plan.waypoints[0].command == mavutil.mavlink.MAV_CMD_NAV_TAKEOFF
+        assert len(dl_plan.geofence) == len(geofence)
+        assert len(dl_plan.rally_points) == len(rally_points)
+        assert math.isclose(dl_plan.home_position.latitude_home, 48.1008, abs_tol=1e-5)
+
+        dl_wpl_path = tmp_path / "downloaded_ap.waypoints"
+        assert mav.download_mission_file(dl_wpl_path, timeout=5.0) is True
+        dl_wpl = MAVLinCS.load_mission_file(dl_wpl_path)
+        assert len(dl_wpl.waypoints) == len(waypoints)
+        assert math.isclose(dl_wpl.home_position.latitude_home, 48.1008, abs_tol=1e-5)
+
+        # Mission Planner .fen and .ral standalone WPL 110 downloads & re-uploads
+        dl_fen_path = tmp_path / "downloaded_ap.fen"
+        dl_ral_path = tmp_path / "downloaded_ap.ral"
+        assert mav.download_mission_file(dl_fen_path, timeout=5.0) is True
+        assert mav.download_mission_file(dl_ral_path, timeout=5.0) is True
+        assert MAVLinCS.load_mission_file(dl_fen_path).geofence == geofence
+        assert MAVLinCS.load_mission_file(dl_ral_path).rally_points == rally_points
+
+        # 5b. PX4: wire has exact item count (no seq 0 HOME), and DO_JUMP shifts to 0-based on wire & back to 1-based!
+        is_px4[0] = True
+        push(ap_mav.heartbeat_encode(
+            mavutil.mavlink.MAV_TYPE_QUADROTOR,
+            mavutil.mavlink.MAV_AUTOPILOT_PX4,
+            0, 0, mavutil.mavlink.MAV_STATE_STANDBY,
+        ))
+        assert mav.upload_mission_file(complex_plan, timeout=5.0) is True
+        px4_wire = storage[mavutil.mavlink.MAV_MISSION_TYPE_MISSION]
+        assert len(px4_wire) == 7  # No fake seq 0 HOME sent to PX4!
+        assert px4_wire[0].command == mavutil.mavlink.MAV_CMD_NAV_TAKEOFF
+        assert px4_wire[3].command == mavutil.mavlink.MAV_CMD_DO_JUMP
+        assert px4_wire[3].param1 == 1.0  # 0-based index 1 on PX4 wire (2nd item)
+        px4_dl = mav.download_mission(timeout=5.0)
+        assert len(px4_dl) == 7
+        assert px4_dl[3].param1 == 2.0  # Restored to 1-based item #2!
+
+        # Missing file / invalid extension return False gracefully
+        assert mav.upload_mission_file(tmp_path / "missing.plan") is False
+        assert mav.download_mission_file(tmp_path / "bad.xyz") is False
+    finally:
+        mav.close()
+
+
 def test_safety_guards_and_invalid_inputs(drone):
     # PWM out of bounds [1000, 2000]
     assert drone.set_servo(servo_channel=9, pwm=950) is False
@@ -1857,6 +2220,7 @@ def test_safety_guards_and_invalid_inputs(drone):
     assert drone.upload_mission([(16, 0.0, 0.0, 10.0)]) is False
     assert drone.upload_rally_points([(48.0, 2.0, 50.0)]) is False
     assert drone.upload_geofence([(mavutil.mavlink.MAV_CMD_NAV_FENCE_RETURN_POINT, 48.0, 2.0, 0.0)]) is False
+    assert drone.upload_mission_file("nonexistent.plan") is False
     assert drone.start_mission() is False
     assert drone.set_current_waypoint(1) is False
     assert drone.reboot() is False
@@ -1893,6 +2257,8 @@ def test_safety_guards_and_invalid_inputs(drone):
     assert drone.download_mission() is None
     assert drone.download_rally_points() is None
     assert drone.download_geofence() is None
+    assert drone.upload_mission_file("nonexistent.plan") is False
+    assert drone.download_mission_file("out.plan") is False
     assert drone.send_timesync() is False
     assert drone.send_statustext("Should fail") is False
     assert drone.send_named_value_int(1, "TEST") is False

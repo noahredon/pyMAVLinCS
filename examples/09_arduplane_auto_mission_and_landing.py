@@ -4,7 +4,6 @@ Example 9: ArduPlane Autonomous Mission (Takeoff, Return Path, Landing Sequence 
 Demonstrates how to build, upload, and execute a complete fixed-wing AUTO mission
 on ArduPlane using MissionItem, upload_mission(), start_mission(),
 do_return_path_start(), do_land_start(), and do_go_around():
-  - Seq 0: HOME position
   - Seq 1: Fixed-wing runway takeoff (MAV_CMD_NAV_TAKEOFF with 15 deg minimum pitch)
   - Seq 2: Outbound navigation waypoint (350m North, 60m altitude)
   - Seq 3: MAV_CMD_DO_RETURN_PATH_START marker (safe inbound corridor entry)
@@ -62,14 +61,7 @@ def main():
             )
 
             mission_items = [
-                # Seq 0: HOME location
-                MissionItem(
-                    command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT,
-                    x=gps_home.lat,
-                    y=gps_home.lon,
-                    z=0.0,
-                ),
-                # Seq 1: Fixed-wing takeoff (param1 = minimum pitch in degrees, z = climb altitude in meters)
+                # Seq 1 on ArduPlane (seq 0 HOME is handled automatically by upload_mission): Fixed-wing takeoff
                 MissionItem(
                     command=mavutil.mavlink.MAV_CMD_NAV_TAKEOFF,
                     param1=15.0,

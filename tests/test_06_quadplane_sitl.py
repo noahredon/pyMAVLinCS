@@ -159,7 +159,6 @@ def test_quadplane_vtol_takeoff_transition_and_qland(quadplane_drone):
         gps0.lat, gps0.lon, north_displacement=800.0, east_displacement=0.0
     )
     mission = [
-        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=gps0.lat, y=gps0.lon, z=0.0),
         MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=wp_far.latitude, y=wp_far.longitude, z=45.0),
         MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_LOITER_UNLIM, x=wp_far.latitude, y=wp_far.longitude, z=45.0),
     ]

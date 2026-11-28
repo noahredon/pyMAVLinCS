@@ -93,7 +93,7 @@ def plane_drone(plane_sitl, tmp_path_factory):
         mav.close()
 
 
-def test_plane_telemetry_and_modes(plane_drone):
+def test_plane_telemetry_and_modes(plane_drone, tmp_path):
     """Verifies ArduPlane vehicle type, fixed-wing mode mapping, and mode transitions."""
     assert plane_drone.vehicle_type_int() == mavutil.mavlink.MAV_TYPE_FIXED_WING
     assert plane_drone.vehicle_type_str() == "MAV_TYPE_FIXED_WING"
@@ -163,6 +163,37 @@ def test_plane_telemetry_and_modes(plane_drone):
     assert plane_drone.clear_waypoints(mission_type=mavutil.mavlink.MAV_MISSION_TYPE_FENCE, timeout=5.0) is True
     assert plane_drone.download_geofence(timeout=10.0) == []
 
+    # Test QGC .plan & Mission Planner .waypoints file upload/download roundtrip on ArduPlane SITL
+    plan_path = tmp_path / "plane_sitl.plan"
+    sample_wps = [
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, param1=15.0, x=gps0.lat, y=gps0.lon, z=45.0),
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=rp1.latitude, y=rp1.longitude, z=50.0),
+        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH),
+    ]
+    MAVLinCS.save_mission_file(
+        plan_path,
+        waypoints=sample_wps,
+        geofence=fence,
+        rally_points=[(rp1.latitude, rp1.longitude, 60.0)],
+    )
+    assert plane_drone.upload_mission_file(plan_path, clear_existing=True, timeout=15.0) is True
+
+    dl_plan_path = tmp_path / "plane_sitl_dl.plan"
+    assert plane_drone.download_mission_file(dl_plan_path, timeout=15.0) is True
+    dl_plan = MAVLinCS.load_mission_file(dl_plan_path)
+    assert len(dl_plan.waypoints) == len(sample_wps)
+    assert len(dl_plan.geofence) == len(fence)
+    assert len(dl_plan.rally_points) == 1
+
+    dl_wpl_path = tmp_path / "plane_sitl_dl.waypoints"
+    assert plane_drone.download_mission_file(dl_wpl_path, timeout=15.0) is True
+    assert len(MAVLinCS.load_mission_file(dl_wpl_path).waypoints) == len(sample_wps)
+
+    # Clean up mission, fence, and rally points before subsequent flight tests
+    assert plane_drone.clear_waypoints(mission_type=mavutil.mavlink.MAV_MISSION_TYPE_MISSION, timeout=5.0) is True
+    assert plane_drone.clear_waypoints(mission_type=mavutil.mavlink.MAV_MISSION_TYPE_FENCE, timeout=5.0) is True
+    assert plane_drone.clear_waypoints(mission_type=mavutil.mavlink.MAV_MISSION_TYPE_RALLY, timeout=5.0) is True
+
 
 def test_plane_takeoff_from_ground(plane_drone):
     """Tests Fixed-Wing runway takeoff via arm() + takeoff() using the autopilot's configured TKOFF_ALT/TKOFF_LVL_PITCH."""
@@ -188,13 +219,11 @@ def test_plane_auto_takeoff_mission_and_guided_flight(plane_drone):
     wp2 = MAVLinCS.cartesian_to_geographic_point(gps0.lat, gps0.lon, north_displacement=250.0, east_displacement=200.0)
     wp_ret = MAVLinCS.cartesian_to_geographic_point(gps0.lat, gps0.lon, north_displacement=120.0, east_displacement=120.0)
 
-    # Seq 0: HOME
-    # Seq 1: Fixed-Wing NAV_TAKEOFF (param1 = 15 deg pitch, z = 45m)
-    # Seq 2 & 3: Outbound waypoints
-    # Seq 4: DO_RETURN_PATH_START marker + Seq 5: return corridor waypoint
-    # Seq 6: DO_LAND_START marker + Seq 7: NAV_LAND at HOME
+    # Item 1 (ArduPlane seq 1): Fixed-Wing NAV_TAKEOFF (param1 = 15 deg pitch, z = 45m)
+    # Item 2 & 3 (seq 2 & 3): Outbound waypoints
+    # Item 4 (seq 4): DO_RETURN_PATH_START marker + Item 5 (seq 5): return corridor waypoint
+    # Item 6 (seq 6): DO_LAND_START marker + Item 7 (seq 7): NAV_LAND at HOME
     mission = [
-        MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=gps0.lat, y=gps0.lon, z=0.0),
         MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, param1=15.0, x=gps0.lat, y=gps0.lon, z=45.0),
         MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=wp1.latitude, y=wp1.longitude, z=50.0),
         MissionItem(command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, x=wp2.latitude, y=wp2.longitude, z=50.0),
@@ -217,8 +246,8 @@ def test_plane_auto_takeoff_mission_and_guided_flight(plane_drone):
     assert mavutil.mavlink.MAV_CMD_DO_RETURN_PATH_START in downloaded_cmds
     assert mavutil.mavlink.MAV_CMD_DO_LAND_START in downloaded_cmds
     assert mavutil.mavlink.MAV_CMD_NAV_LAND in downloaded_cmds
-    assert math.isclose(downloaded[2].x, wp1.latitude, abs_tol=1e-5)
-    assert math.isclose(downloaded[2].y, wp1.longitude, abs_tol=1e-5)
+    assert math.isclose(downloaded[1].x, wp1.latitude, abs_tol=1e-5)
+    assert math.isclose(downloaded[1].y, wp1.longitude, abs_tol=1e-5)
 
     # Start mission from the ground (automatically arms and enters AUTO mode)
     assert plane_drone.start_mission(timeout=10) is True
